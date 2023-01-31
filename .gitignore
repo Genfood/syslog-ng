@@ -51,6 +51,8 @@ TAGS
 GPATH
 GRTAGS
 GTAGS
+modules/python-modules/syslogng.egg-info
+aclocal.m4-e
 # personal
 .vscode
 .libs
