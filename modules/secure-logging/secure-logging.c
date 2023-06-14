@@ -37,6 +37,7 @@
 
 // Secure logging declarations
 #include "slog.h"
+#include "slog-dest.h"
 
 /*
  * $(slog [opts] $RAWMSG)
@@ -268,9 +269,16 @@ tf_slog_func_free_state(gpointer s)
 TEMPLATE_FUNCTION(TFSlogState, tf_slog, tf_slog_prepare, tf_simple_func_eval, tf_slog_call, tf_slog_func_free_state,
                   NULL);
 
+extern CfgParser slog_parser;
+
 static Plugin secure_logging_plugins[] =
 {
   TEMPLATE_FUNCTION_PLUGIN(tf_slog, "slog"),
+  {
+    .type = LL_CONTEXT_DESTINATION,
+    .name = "slog-dest",
+    .parser = &slog_parser,
+  }
 };
 
 gboolean

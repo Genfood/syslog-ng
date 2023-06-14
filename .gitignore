@@ -51,3 +51,11 @@ TAGS
 GPATH
 GRTAGS
 GTAGS
+# personal
+.vscode
+.libs
+*.lo
+*.la
+*.o
+.dirstamp
+/Makefile

@@ -2,8 +2,13 @@ noinst_LTLIBRARIES += modules/secure-logging/libsyslog-ng-secure-logging.la
 module_LTLIBRARIES += modules/secure-logging/libsecure-logging.la
 
 modules_secure_logging_libsyslog_ng_secure_logging_la_SOURCES =	\
-	modules/secure-logging/slog.c                           \
-	modules/secure-logging/slog.h
+	modules/secure-logging/slog.c                               \
+	modules/secure-logging/slog.h                               \
+    modules/secure-logging/slog-dest.c                          \
+    modules/secure-logging/slog-dest.h                          \
+    modules/secure-logging/slog-dest-parser.c                   \
+    modules/secure-logging/slog-dest-parser.h                   \
+    modules/secure-logging/slog-dest-grammar.y
 
 modules_secure_logging_libsyslog_ng_secure_logging_la_CFLAGS = \
 	$(AM_CFLAGS)                                 \
@@ -17,6 +22,13 @@ modules_secure_logging_libsyslog_ng_secure_logging_la_DEPENDENCIES	=	\
 	$(MODULE_DEPS_LIBS)
 
 LIBSYSLOG_SECURE_LOGGING = $(top_builddir)/modules/secure-logging/libsyslog-ng-secure-logging.la
+
+BUILT_SOURCES               +=                       \
+    modules/secure-logging/slog-dest-grammar.y       \
+    modules/secure-logging/slog-dest-grammar.c       \
+    modules/secure-logging/slog-dest-grammar.h
+EXTRA_DIST                  +=                       \
+    modules/secure-logging/slog-dest-grammar.ym
 
 modules_secure_logging_libsecure_logging_la_SOURCES = \
 	modules/secure-logging/secure-logging.c
