@@ -30,19 +30,14 @@
 
 #include "modules/http/http-signals.h"
 
-#include <time.h>
-
 #define PYTHON_HTTP_HEADER_PLUGIN "python-http-header"
 
 struct _PythonHttpHeaderPlugin
 {
   LogDriverPlugin super;
+  PythonBinding binding;
 
   gboolean mark_errors_as_critical;
-  gchar *class;
-  GList *loaders;
-
-  GHashTable *options;
 
   struct
   {
@@ -52,6 +47,18 @@ struct _PythonHttpHeaderPlugin
     PyObject *on_http_response_received;
   } py;
 };
+
+PythonBinding *
+python_http_header_get_binding(PythonHttpHeaderPlugin *self)
+{
+  return &self->binding;
+}
+
+void
+python_http_header_set_mark_errors_as_critical(PythonHttpHeaderPlugin *self, gboolean enable)
+{
+  self->mark_errors_as_critical = enable;
+}
 
 static gboolean
 _py_append_pylist_to_list(PyObject *py_list, GList **list)
@@ -134,13 +141,13 @@ _py_convert_list_to_pylist(List *list)
 static gboolean
 _py_attach_class(PythonHttpHeaderPlugin *self)
 {
-  self->py.class = _py_resolve_qualified_name(self->class);
+  self->py.class = _py_resolve_qualified_name(self->binding.class);
   if (!self->py.class)
     {
       gchar buf[256];
 
       msg_error("Error looking up Python class",
-                evt_tag_str("class", self->class),
+                evt_tag_str("class", self->binding.class),
                 evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
       _py_finish_exception_handling();
 
@@ -149,41 +156,21 @@ _py_attach_class(PythonHttpHeaderPlugin *self)
   return TRUE;
 }
 
-static PyObject *
-_create_arg_dict_from_options(PythonHttpHeaderPlugin *self)
-{
-  PyObject *py_args = _py_create_arg_dict(self->options);
-
-  if (!py_args)
-    {
-      gchar buf[256];
-
-      msg_error("Error creating argument dictionary",
-                evt_tag_str("class", self->class),
-                evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
-      _py_finish_exception_handling();
-
-      return NULL;
-    }
-
-  return py_args;
-}
-
 static gboolean
 _py_instantiate_class(PythonHttpHeaderPlugin *self)
 {
-  PyObject *py_args = _create_arg_dict_from_options(self);
-  if (!py_args)
+  PyObject *py_options_dict = python_options_create_py_dict(self->binding.options);
+  if (!py_options_dict)
     return FALSE;
 
   gboolean result = FALSE;
-  self->py.instance = _py_invoke_function(self->py.class, py_args, self->class, self->super.name);
+  self->py.instance = _py_invoke_function(self->py.class, py_options_dict, self->binding.class, self->super.name);
   if (!self->py.instance)
     {
       gchar buf[256];
 
       msg_error("Error instantiating Python class",
-                evt_tag_str("class", self->class),
+                evt_tag_str("class", self->binding.class),
                 evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
       _py_finish_exception_handling();
 
@@ -192,7 +179,7 @@ _py_instantiate_class(PythonHttpHeaderPlugin *self)
   result = TRUE;
 
 exit:
-  Py_XDECREF(py_args);
+  Py_XDECREF(py_options_dict);
   return result;
 }
 
@@ -203,7 +190,7 @@ _py_attach_get_headers(PythonHttpHeaderPlugin *self)
   if (!self->py.get_headers)
     {
       msg_error("Error initializing plugin, required method not found",
-                evt_tag_str("class", self->class),
+                evt_tag_str("class", self->binding.class),
                 evt_tag_str("method", "get_headers"));
       return FALSE;
     }
@@ -279,20 +266,20 @@ _append_headers(PythonHttpHeaderPlugin *self, HttpHeaderRequestSignalData *data)
       gchar buf[256];
 
       msg_error("Error creating Python arguments",
-                evt_tag_str("class", self->class),
+                evt_tag_str("class", self->binding.class),
                 evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
       _py_finish_exception_handling();
 
       goto cleanup;
     }
 
-  py_ret_list = _py_invoke_function_with_args(self->py.get_headers, py_args, self->class, "_append_headers");
+  py_ret_list = _py_invoke_function_with_args(self->py.get_headers, py_args, self->binding.class, "_append_headers");
   if (!py_ret_list)
     {
       gchar buf[256];
 
       msg_error("Invalid response returned by Python call",
-                evt_tag_str("class", self->class),
+                evt_tag_str("class", self->binding.class),
                 evt_tag_str("method", "get_headers"),
                 evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
       _py_finish_exception_handling();
@@ -301,7 +288,7 @@ _append_headers(PythonHttpHeaderPlugin *self, HttpHeaderRequestSignalData *data)
     }
 
   msg_debug("Python call returned valid response",
-            evt_tag_str("class", self->class),
+            evt_tag_str("class", self->binding.class),
             evt_tag_str("method", "get_headers"),
             evt_tag_str("return_type", py_ret_list->ob_type->tp_name));
 
@@ -310,7 +297,7 @@ _append_headers(PythonHttpHeaderPlugin *self, HttpHeaderRequestSignalData *data)
       gchar buf[256];
 
       msg_error("Converting Python List failed",
-                evt_tag_str("class", self->class),
+                evt_tag_str("class", self->binding.class),
                 evt_tag_str("method", "get_headers"),
                 evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
       _py_finish_exception_handling();
@@ -348,13 +335,13 @@ _on_http_response_received(PythonHttpHeaderPlugin *self, HttpResponseReceivedSig
         gchar buf[256];
 
         msg_error("Error creating Python argument",
-                  evt_tag_str("class", self->class),
+                  evt_tag_str("class", self->binding.class),
                   evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
         _py_finish_exception_handling();
         return;
       }
 
-    _py_invoke_void_function(self->py.on_http_response_received, py_arg, self->class, "_on_http_response_received");
+    _py_invoke_void_function(self->py.on_http_response_received, py_arg, self->binding.class, "_on_http_response_received");
 
     Py_XDECREF(py_arg);
   }
@@ -362,10 +349,14 @@ _on_http_response_received(PythonHttpHeaderPlugin *self, HttpResponseReceivedSig
 }
 
 static gboolean
-_init(PythonHttpHeaderPlugin *self)
+_init(PythonHttpHeaderPlugin *self, LogDriver *driver)
 {
+  GlobalConfig *cfg = log_pipe_get_config(&driver->super);
+
+  if (!python_binding_init(&self->binding, cfg, driver->id))
+    return FALSE;
+
   PyGILState_STATE gstate = PyGILState_Ensure();
-  _py_perform_imports(self->loaders);
 
   if (!_py_attach_bindings(self))
     goto fail;
@@ -378,38 +369,12 @@ fail:
   return FALSE;
 }
 
-static void
-_connect_http_header_request_slot(LogDriverPlugin *s, SignalSlotConnector *ssc)
-{
-  PythonHttpHeaderPlugin *self = (PythonHttpHeaderPlugin *) s;
-  CONNECT(ssc, signal_http_header_request, _append_headers, self);
-
-  msg_debug("SignalSlotConnector slot registered",
-            evt_tag_printf("connector", "%p", ssc),
-            evt_tag_printf("signal", "%s", signal_http_header_request),
-            evt_tag_printf("plugin_name", "%s", PYTHON_HTTP_HEADER_PLUGIN),
-            evt_tag_printf("plugin_instance", "%p", s));
-}
-
-static void
-_connect_http_response_received_slot(LogDriverPlugin *s, SignalSlotConnector *ssc)
-{
-  PythonHttpHeaderPlugin *self = (PythonHttpHeaderPlugin *) s;
-  CONNECT(ssc, signal_http_response_received, _on_http_response_received, self);
-
-  msg_debug("SignalSlotConnector slot registered",
-            evt_tag_printf("connector", "%p", ssc),
-            evt_tag_printf("signal", "%s", signal_http_response_received),
-            evt_tag_printf("plugin_name", "%s", PYTHON_HTTP_HEADER_PLUGIN),
-            evt_tag_printf("plugin_instance", "%p", s));
-}
-
 static gboolean
 _attach(LogDriverPlugin *s, LogDriver *driver)
 {
   PythonHttpHeaderPlugin *self = (PythonHttpHeaderPlugin *) s;
 
-  if (!_init(self))
+  if (!_init(self, driver))
     {
       msg_error("Plugin initialization failed",
                 evt_tag_str("plugin", PYTHON_HTTP_HEADER_PLUGIN));
@@ -418,10 +383,23 @@ _attach(LogDriverPlugin *s, LogDriver *driver)
     }
 
   SignalSlotConnector *ssc = driver->super.signal_slot_connector;
-  _connect_http_header_request_slot(s, ssc);
-  _connect_http_response_received_slot(s, ssc);
+
+  CONNECT(ssc, signal_http_header_request, _append_headers, self);
+  CONNECT(ssc, signal_http_response_received, _on_http_response_received, self);
 
   return TRUE;
+}
+
+static void
+_detach(LogDriverPlugin *s, LogDriver *driver)
+{
+  PythonHttpHeaderPlugin *self = (PythonHttpHeaderPlugin *) s;
+  SignalSlotConnector *ssc = driver->super.signal_slot_connector;
+
+  DISCONNECT(ssc, signal_http_header_request, _append_headers, self);
+  DISCONNECT(ssc, signal_http_response_received, _on_http_response_received, self);
+
+  python_binding_deinit(&self->binding);
 }
 
 static void
@@ -429,17 +407,11 @@ _free(LogDriverPlugin *s)
 {
   PythonHttpHeaderPlugin *self = (PythonHttpHeaderPlugin *) s;
 
-  g_free(self->class);
-
-  if (self->options)
-    g_hash_table_unref(self->options);
-
-  if (self->loaders)
-    g_list_free_full(self->loaders, g_free);
-
   PyGILState_STATE gstate = PyGILState_Ensure();
   _py_detach_bindings(self);
   PyGILState_Release(gstate);
+
+  python_binding_clear(&self->binding);
 
   log_driver_plugin_free_method(s);
 }
@@ -452,38 +424,12 @@ python_http_header_new(void)
   log_driver_plugin_init_instance(&(self->super), PYTHON_HTTP_HEADER_PLUGIN);
 
   self->mark_errors_as_critical = TRUE;
-  self->options = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   self->py.class = self->py.instance = self->py.get_headers = NULL;
 
   self->super.attach = _attach;
+  self->super.detach = _detach;
   self->super.free_fn = _free;
 
+  python_binding_init_instance(&self->binding);
   return self;
-}
-
-void
-python_http_header_set_loaders(PythonHttpHeaderPlugin *self, GList *loaders)
-{
-  g_list_free_full(self->loaders, g_free);
-  self->loaders = loaders;
-}
-
-void
-python_http_header_set_class(PythonHttpHeaderPlugin *self, gchar *class)
-{
-  g_free(self->class);
-  self->class = g_strdup(class);
-}
-
-void
-python_http_header_set_option(PythonHttpHeaderPlugin *self, gchar *key, gchar *value)
-{
-  gchar *normalized_key = __normalize_key(key);
-  g_hash_table_insert(self->options, normalized_key, g_strdup(value));
-}
-
-void
-python_http_header_set_mark_errors_as_critical(PythonHttpHeaderPlugin *self, gboolean enable)
-{
-  self->mark_errors_as_critical = enable;
 }

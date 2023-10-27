@@ -26,16 +26,6 @@
 #include "apphook.h"
 #include "stats/stats-cluster-single.h"
 
-static LogParser *
-_create_metrics_probe(void)
-{
-  LogParser *temp_metrics_probe = metrics_probe_new(configuration);
-  LogParser *metrics_probe = (LogParser *) log_pipe_clone(&temp_metrics_probe->super);
-  log_pipe_unref(&temp_metrics_probe->super);
-
-  return metrics_probe;
-}
-
 static void
 _add_label(LogParser *s, const gchar *label, const gchar *value_template_str)
 {
@@ -55,9 +45,7 @@ _stats_cluster_exists(const gchar *key, StatsClusterLabel *labels, gsize labels_
 
   stats_lock();
   {
-    StatsCounterItem *counter;
-    cluster = stats_register_dynamic_counter(0, &sc_key, SC_TYPE_SINGLE_VALUE, &counter);
-    stats_unregister_dynamic_counter(cluster, SC_TYPE_SINGLE_VALUE, &counter);
+    cluster = stats_get_cluster(&sc_key);
   }
   stats_unlock();
 
@@ -122,7 +110,9 @@ _assert_counter_value(const gchar *key, StatsClusterLabel *labels, gsize labels_
 
 Test(metrics_probe, test_metrics_probe_defaults)
 {
-  LogParser *metrics_probe = _create_metrics_probe();
+  LogParser *tmp_metrics_probe = metrics_probe_new(configuration);
+  LogParser *metrics_probe = (LogParser *) log_pipe_clone(&tmp_metrics_probe->super);
+  log_pipe_unref(&tmp_metrics_probe->super);
   cr_assert(log_pipe_init(&metrics_probe->super), "Failed to init metrics-probe");
 
   LogMessage *msg = log_msg_new_empty();
@@ -179,8 +169,11 @@ Test(metrics_probe, test_metrics_probe_defaults)
 
 Test(metrics_probe, test_metrics_probe_custom_labels_only)
 {
-  LogParser *metrics_probe = _create_metrics_probe();
-  _add_label(metrics_probe, "test_label", "foo");
+  LogParser *tmp_metrics_probe = metrics_probe_new(configuration);
+  _add_label(tmp_metrics_probe, "test_label", "foo");
+
+  LogParser *metrics_probe = (LogParser *) log_pipe_clone(&tmp_metrics_probe->super);
+  log_pipe_unref(&tmp_metrics_probe->super);
 
   cr_assert_not(log_pipe_init(&metrics_probe->super), "metrics-probe should have failed to init");
 
@@ -189,8 +182,11 @@ Test(metrics_probe, test_metrics_probe_custom_labels_only)
 
 Test(metrics_probe, test_metrics_probe_custom_key_only)
 {
-  LogParser *metrics_probe = _create_metrics_probe();
-  metrics_probe_set_key(metrics_probe, "custom_key");
+  LogParser *tmp_metrics_probe = metrics_probe_new(configuration);
+  metrics_probe_set_key(tmp_metrics_probe, "custom_key");
+
+  LogParser *metrics_probe = (LogParser *) log_pipe_clone(&tmp_metrics_probe->super);
+  log_pipe_unref(&tmp_metrics_probe->super);
   cr_assert(log_pipe_init(&metrics_probe->super), "Failed to init metrics-probe");
 
   LogMessage *msg = log_msg_new_empty();
@@ -215,11 +211,14 @@ Test(metrics_probe, test_metrics_probe_custom_key_only)
 
 Test(metrics_probe, test_metrics_probe_custom_full)
 {
-  LogParser *metrics_probe = _create_metrics_probe();
-  metrics_probe_set_key(metrics_probe, "custom_key");
-  _add_label(metrics_probe, "test_label_3", "foo");
-  _add_label(metrics_probe, "test_label_1", "${test_field_1}");
-  _add_label(metrics_probe, "test_label_2", "${test_field_2}");
+  LogParser *tmp_metrics_probe = metrics_probe_new(configuration);
+  metrics_probe_set_key(tmp_metrics_probe, "custom_key");
+  _add_label(tmp_metrics_probe, "test_label_3", "foo");
+  _add_label(tmp_metrics_probe, "test_label_1", "${test_field_1}");
+  _add_label(tmp_metrics_probe, "test_label_2", "${test_field_2}");
+
+  LogParser *metrics_probe = (LogParser *) log_pipe_clone(&tmp_metrics_probe->super);
+  log_pipe_unref(&tmp_metrics_probe->super);
   cr_assert(log_pipe_init(&metrics_probe->super), "Failed to init metrics-probe");
 
   LogMessage *msg = log_msg_new_empty();
@@ -273,9 +272,12 @@ Test(metrics_probe, test_metrics_probe_stats_max_dynamics)
   configuration->stats_options.max_dynamic = 1;
   stats_reinit(&configuration->stats_options);
 
-  LogParser *metrics_probe = _create_metrics_probe();
-  metrics_probe_set_key(metrics_probe, "custom_key");
-  _add_label(metrics_probe, "test_label", "${test_field}");
+  LogParser *tmp_metrics_probe = metrics_probe_new(configuration);
+  metrics_probe_set_key(tmp_metrics_probe, "custom_key");
+  _add_label(tmp_metrics_probe, "test_label", "${test_field}");
+
+  LogParser *metrics_probe = (LogParser *) log_pipe_clone(&tmp_metrics_probe->super);
+  log_pipe_unref(&tmp_metrics_probe->super);
   cr_assert(log_pipe_init(&metrics_probe->super), "Failed to init metrics-probe");
 
   LogMessage *msg = log_msg_new_empty();
@@ -303,6 +305,114 @@ Test(metrics_probe, test_metrics_probe_stats_max_dynamics)
 
   cr_assert(log_parser_process(metrics_probe, &msg, NULL, "", -1), "Failed to apply metrics-probe");
   cr_assert_not(_stats_cluster_exists("custom_key", expected_labels_2, G_N_ELEMENTS(expected_labels_2)));
+
+  log_msg_unref(msg);
+  log_pipe_deinit(&metrics_probe->super);
+  log_pipe_unref(&metrics_probe->super);
+}
+
+Test(metrics_probe, test_metrics_probe_increment)
+{
+  LogParser *tmp_metrics_probe = metrics_probe_new(configuration);
+  metrics_probe_set_key(tmp_metrics_probe, "custom_key");
+  LogTemplate *increment_template = log_template_new(tmp_metrics_probe->super.cfg, NULL);
+  log_template_compile(increment_template, "${custom_increment}", NULL);
+  metrics_probe_set_increment_template(tmp_metrics_probe, increment_template);
+  log_template_unref(increment_template);
+
+  LogParser *metrics_probe = (LogParser *) log_pipe_clone(&tmp_metrics_probe->super);
+  log_pipe_unref(&tmp_metrics_probe->super);
+  cr_assert(log_pipe_init(&metrics_probe->super), "Failed to init metrics-probe");
+
+  LogMessage *msg = log_msg_new_empty();
+  log_msg_set_value_by_name(msg, "custom_increment", "1337", -1);
+  StatsClusterLabel expected_labels[] = {};
+
+  cr_assert(log_parser_process(metrics_probe, &msg, NULL, "", -1), "Failed to apply metrics-probe");
+  _assert_counter_value("custom_key",
+                        expected_labels,
+                        G_N_ELEMENTS(expected_labels),
+                        1337);
+
+  log_msg_unref(msg);
+  log_pipe_deinit(&metrics_probe->super);
+  log_pipe_unref(&metrics_probe->super);
+}
+
+Test(metrics_probe, test_metrics_probe_level)
+{
+  LogParser *tmp_metrics_probe = metrics_probe_new(configuration);
+  metrics_probe_set_key(tmp_metrics_probe, "custom_key");
+  metrics_probe_set_level(tmp_metrics_probe, STATS_LEVEL2);
+
+  LogParser *metrics_probe = (LogParser *) log_pipe_clone(&tmp_metrics_probe->super);
+  log_pipe_unref(&tmp_metrics_probe->super);
+  cr_assert(log_pipe_init(&metrics_probe->super), "Failed to init metrics-probe");
+
+  LogMessage *msg = log_msg_new_empty();
+  StatsClusterLabel expected_labels[] = {};
+
+  configuration->stats_options.level = STATS_LEVEL0;
+  cr_assert(cfg_init(configuration));
+  cr_assert(log_parser_process(metrics_probe, &msg, NULL, "", -1), "Failed to apply metrics-probe");
+  cr_assert_not(_stats_cluster_exists("custom_key", expected_labels, G_N_ELEMENTS(expected_labels)));
+  cr_assert(cfg_deinit(configuration));
+
+  configuration->stats_options.level = STATS_LEVEL1;
+  cr_assert(cfg_init(configuration));
+  cr_assert(log_parser_process(metrics_probe, &msg, NULL, "", -1), "Failed to apply metrics-probe");
+  cr_assert_not(_stats_cluster_exists("custom_key", expected_labels, G_N_ELEMENTS(expected_labels)));
+  cr_assert(cfg_deinit(configuration));
+
+  configuration->stats_options.level = STATS_LEVEL2;
+  cr_assert(cfg_init(configuration));
+  cr_assert(log_parser_process(metrics_probe, &msg, NULL, "", -1), "Failed to apply metrics-probe");
+  _assert_counter_value("custom_key",
+                        expected_labels,
+                        G_N_ELEMENTS(expected_labels),
+                        1);
+  cr_assert(cfg_deinit(configuration));
+
+  log_msg_unref(msg);
+  log_pipe_deinit(&metrics_probe->super);
+  log_pipe_unref(&metrics_probe->super);
+}
+
+Test(metrics_probe, test_metrics_probe_dynamic_labels)
+{
+  LogParser *tmp_metrics_probe = metrics_probe_new(configuration);
+  metrics_probe_set_key(tmp_metrics_probe, "custom_key");
+  _add_label(tmp_metrics_probe, "test_label", "${test_field}");
+  ValuePairs *vp = metrics_probe_get_value_pairs(tmp_metrics_probe);
+  value_pairs_add_glob_pattern(vp, "test_prefix.*", TRUE);
+
+  LogParser *metrics_probe = (LogParser *) log_pipe_clone(&tmp_metrics_probe->super);
+  log_pipe_unref(&tmp_metrics_probe->super);
+  cr_assert(log_pipe_init(&metrics_probe->super), "Failed to init metrics-probe");
+
+  LogMessage *msg = log_msg_new_empty();
+  log_msg_set_value_by_name(msg, "test_field", "test_field_value", -1);
+  log_msg_set_value_by_name(msg, "test_prefix.test_field_1", "test_prefix_test_field_1_value", -1);
+  log_msg_set_value_by_name(msg, "test_prefix.test_field_2", "test_prefix_test_field_2_value", -1);
+
+  StatsClusterLabel expected_labels[] =
+  {
+    stats_cluster_label("test_label", "test_field_value"),
+    stats_cluster_label("test_prefix.test_field_1", "test_prefix_test_field_1_value"),
+    stats_cluster_label("test_prefix.test_field_2", "test_prefix_test_field_2_value"),
+  };
+
+  cr_assert(log_parser_process(metrics_probe, &msg, NULL, "", -1), "Failed to apply metrics-probe");
+  _assert_counter_value("custom_key",
+                        expected_labels,
+                        G_N_ELEMENTS(expected_labels),
+                        1);
+
+  cr_assert(log_parser_process(metrics_probe, &msg, NULL, "", -1), "Failed to apply metrics-probe");
+  _assert_counter_value("custom_key",
+                        expected_labels,
+                        G_N_ELEMENTS(expected_labels),
+                        2);
 
   log_msg_unref(msg);
   log_pipe_deinit(&metrics_probe->super);

@@ -80,6 +80,9 @@ static CfgLexerKeyword main_keywords[] =
   { "replace",            KW_REPLACE_PREFIX, KWS_OBSOLETE, "replace_prefix" },
   { "replace_prefix",     KW_REPLACE_PREFIX },
   { "cast",               KW_CAST },
+  { "upper",              KW_UPPER },
+  { "lower",              KW_LOWER },
+  { "include_bytes",      KW_INCLUDE_BYTES },
 
   /* option items */
   { "flags",              KW_FLAGS },
@@ -98,6 +101,7 @@ static CfgLexerKeyword main_keywords[] =
   { "lifetime",           KW_LIFETIME },
   { "max_dynamics",       KW_MAX_DYNAMIC },
   { "syslog_stats",       KW_SYSLOG_STATS },
+  { "healthcheck_freq",   KW_HEALTHCHECK_FREQ},
   { "min_iw_size_per_reader", KW_MIN_IW_SIZE_PER_READER },
   { "flush_lines",        KW_FLUSH_LINES },
   { "flush_timeout",      KW_FLUSH_TIMEOUT, KWS_OBSOLETE, "Some drivers support batch-timeout() instead that you can specify at the destination level." },
@@ -177,12 +181,23 @@ static CfgLexerKeyword main_keywords[] =
 
   { "retries",            KW_RETRIES },
   { "workers",            KW_WORKERS },
+  { "worker_partition_key", KW_WORKER_PARTITION_KEY },
   { "batch_lines",        KW_BATCH_LINES },
   { "batch_timeout",      KW_BATCH_TIMEOUT },
 
   { "read_old_records",   KW_READ_OLD_RECORDS},
   { "use_syslogng_pid",   KW_USE_SYSLOGNG_PID },
   { "fetch_no_data_delay", KW_FETCH_NO_DATA_DELAY},
+
+  /* multi-line */
+  { "multi_line_mode",    KW_MULTI_LINE_MODE  },
+  { "multi_line_prefix",  KW_MULTI_LINE_PREFIX },
+  { "multi_line_garbage", KW_MULTI_LINE_GARBAGE },
+  { "multi_line_suffix",  KW_MULTI_LINE_GARBAGE },
+  { "parallelize",        KW_PARALLELIZE },
+  { "partitions",         KW_PARTITIONS },
+  { "partition_key",      KW_PARTITION_KEY },
+
   /* filter items */
   { "type",               KW_TYPE },
   { "tags",               KW_TAGS },

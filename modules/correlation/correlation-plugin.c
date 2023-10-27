@@ -41,13 +41,18 @@ static Plugin correlation_plugins[] =
     .name = "grouping-by",
     .parser = &correlation_parser,
   },
+  {
+    .type = LL_CONTEXT_PARSER,
+    .name = "group-lines",
+    .parser = &correlation_parser,
+  },
 };
 
 gboolean
 correlation_module_init(PluginContext *context, CfgArgs *args)
 {
   pattern_db_global_init();
-  grouping_by_global_init();
+  grouping_parser_global_init();
   plugin_register(context, correlation_plugins, G_N_ELEMENTS(correlation_plugins));
   return TRUE;
 }

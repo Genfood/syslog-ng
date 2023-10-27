@@ -47,6 +47,7 @@
 #include "timeutils/cache.h"
 #include "mainloop.h"
 #include "msg-format.h"
+#include "str-utils.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -351,7 +352,7 @@ pdbtool_match_values(NVHandle handle, const gchar *name,
 }
 
 static void
-pdbtool_pdb_emit(LogMessage *msg, gboolean synthetic, gpointer user_data)
+pdbtool_pdb_emit(LogMessage *msg, gpointer user_data)
 {
   gpointer *args = (gpointer *) user_data;
   FilterExprNode *filter = (FilterExprNode *) args[0];
@@ -389,7 +390,7 @@ pdbtool_match(int argc, char *argv[])
   GArray *dbg_list = NULL;
   RDebugInfo *dbg_info;
   gint i = 0, pos = 0;
-  gint ret = 0;
+  gint ret = 1;
   const gchar *name = NULL;
   gssize name_len = 0;
   MsgFormatOptions parse_options;
@@ -421,7 +422,7 @@ pdbtool_match(int argc, char *argv[])
       template = log_template_new(configuration, NULL);
       if (!log_template_compile(template, t, &error))
         {
-          fprintf(stderr, "Error compiling template: %s, error: %s\n", template->template, error->message);
+          fprintf(stderr, "Error compiling template: %s, error: %s\n", template->template_str, error->message);
           g_clear_error(&error);
           g_free(t);
           return 1;
@@ -509,6 +510,7 @@ pdbtool_match(int argc, char *argv[])
     {
       dbg_list = g_array_new(FALSE, FALSE, sizeof(RDebugInfo));
     }
+  ret = 0;
   while (!eof && (buf || match_message))
     {
       invalidate_cached_time();
@@ -599,12 +601,13 @@ pdbtool_match(int argc, char *argv[])
           dbg_info = NULL;
           {
             gpointer nulls[] = { NULL, NULL, &ret, output };
-            pdbtool_pdb_emit(msg, FALSE, nulls);
+            pdbtool_pdb_emit(msg, nulls);
           }
         }
       else
         {
           pattern_db_process(patterndb, msg);
+          pdbtool_pdb_emit(msg, args);
         }
 
       if (G_LIKELY(proto))
@@ -682,33 +685,40 @@ static gboolean
 pdbtool_test_value(LogMessage *msg, const gchar *name, const gchar *test_value, const gchar *test_type)
 {
   const gchar *value;
-  const gchar *type;
   gssize value_len;
-  LogMessageValueType t;
+  LogMessageValueType t, test_t;
   gboolean ret = TRUE;
 
   value = log_msg_get_value_by_name_with_type(msg, name, &value_len, &t);
-  type = log_msg_value_type_to_str(t);
 
   if (!test_type)
     {
       /* not interested in validating the type */
-      test_type = type;
+      test_t = t;
+    }
+  else
+    {
+      if (!log_msg_value_type_from_str(test_type, &test_t))
+        {
+          printf(" Unknown type name specified in test_value, name='%s', expected_type='%s'\n", name, test_type);
+          return FALSE;
+        }
     }
 
   if (!(value && strncmp(value, test_value, value_len) == 0 && value_len == strlen(test_value)
-        && strcmp(type, test_type) == 0))
+        && t == test_t))
     {
       if (value)
         printf(" Wrong match name='%s', value='%.*s', type='%s', expected='%s', expected_type='%s'\n", name, (gint) value_len,
-               value, type, test_value, test_type);
+               value, log_msg_value_type_to_str(t), test_value, log_msg_value_type_to_str(test_t));
       else
         printf(" No value to match name='%s', expected='%s'\n", name, test_value);
 
       ret = FALSE;
     }
   else if (verbose_flag)
-    printf(" Match name='%s', value='%.*s', type='%s', expected='%s'\n", name, (gint) value_len, value, type, test_value);
+    printf(" Match name='%s', value='%.*s', type='%s%s', expected='%s'\n", name, (gint) value_len, value,
+           log_msg_value_type_to_str(t), test_type ? "" : "[unchecked]", test_value);
 
   return ret;
 }
@@ -748,6 +758,64 @@ pdbtool_test_find_conflicts(PatternDB *patterndb, LogMessage *msg)
 
       g_strfreev(matching_ids);
     }
+}
+
+gboolean
+pdbtool_test_value_type_callback(NVHandle handle, const gchar *name,
+                                 const gchar *value, gssize length,
+                                 LogMessageValueType type, gpointer user_data)
+{
+  gboolean *value_types_are_correct = (gboolean *) user_data;
+  gint64 i64;
+  gdouble d;
+  gboolean b;
+  UnixTime ut;
+  gboolean valid;
+  GError *error = NULL;
+
+  APPEND_ZERO(value, value, length);
+
+  switch (type)
+    {
+    case LM_VT_NULL:
+    case LM_VT_STRING:
+    case LM_VT_JSON:
+    case LM_VT_BYTES:
+    case LM_VT_PROTOBUF:
+    case LM_VT_LIST:
+    default:
+      valid = TRUE;
+      break;
+    case LM_VT_DATETIME:
+      valid = type_cast_to_datetime_unixtime(value, &ut, &error);
+      break;
+    case LM_VT_INTEGER:
+      valid = type_cast_to_int64(value, &i64, &error);
+      break;
+    case LM_VT_DOUBLE:
+      valid = type_cast_to_double(value, &d, &error);
+      break;
+    case LM_VT_BOOLEAN:
+      valid = type_cast_to_boolean(value, &b, &error);
+      break;
+    }
+  if (!valid)
+    {
+      printf(" Value type validation failed, ${%s} did not validate: %s\n",
+             name, error->message);
+      g_clear_error(&error);
+      *value_types_are_correct = FALSE;
+    }
+  return FALSE;
+}
+
+static gboolean
+pdbtool_test_value_types(LogMessage *msg)
+{
+  gboolean result = TRUE;
+
+  log_msg_values_foreach(msg, pdbtool_test_value_type_callback, &result);
+  return result;
 }
 
 static gint
@@ -835,10 +903,12 @@ pdbtool_test(int argc, char *argv[])
               for (i = 0; example->values && i < example->values->len; i++)
                 {
                   gchar **nv = g_ptr_array_index(example->values, i);
-                  if (!pdbtool_test_value(msg, nv[0], nv[1], nv[2] ? : "string"))
+                  if (!pdbtool_test_value(msg, nv[0], nv[1], nv[2]))
                     failed_to_match = TRUE;
                 }
 
+              if (!pdbtool_test_value_types(msg))
+                failed_to_match = TRUE;
               log_msg_unref(msg);
             }
           else if (!example->program && example->message)
@@ -1082,6 +1152,7 @@ pdbtool_patternize(int argc, char *argv[])
   gint i;
   GError *error = NULL;
   GString *delimcheck = g_string_new(" "); /* delims should always include a space */
+  gint ret = 0;
 
   if (iterate_outliers)
     iterate = PTZ_ITERATE_OUTLIERS;
@@ -1107,6 +1178,7 @@ pdbtool_patternize(int argc, char *argv[])
         {
           fprintf(stderr, "Error adding log file as patternize input: %s\n", error->message);
           g_clear_error(&error);
+          ret = 1;
           goto exit;
         }
     }
@@ -1118,7 +1190,7 @@ pdbtool_patternize(int argc, char *argv[])
 exit:
   ptz_free(ptz);
 
-  return 0;
+  return ret;
 }
 
 static GOptionEntry patternize_options[] =
@@ -1183,6 +1255,10 @@ static GOptionEntry pdbtool_options[] =
   {
     "verbose",   'v', 0, G_OPTION_ARG_NONE, &verbose_flag,
     "Enable verbose messages on stderr", NULL
+  },
+  {
+    "trace",   't', 0, G_OPTION_ARG_NONE, &trace_flag,
+    "Enable trace messages on stderr", NULL
   },
   {
     "module", 0, 0, G_OPTION_ARG_CALLBACK, pdbtool_load_module,
@@ -1261,18 +1337,12 @@ main(int argc, char *argv[])
 
   setlocale(LC_ALL, "");
 
-  main_loop_thread_resource_init();
   msg_init(TRUE);
-  resolved_configurable_paths_init(&resolved_configurable_paths);
-  stats_init();
-  scratch_buffers_global_init();
-  scratch_buffers_allocator_init();
-  log_msg_global_init();
-  log_template_global_init();
-  log_tags_global_init();
-  pattern_db_global_init();
-  crypto_init();
 
+  resolved_configurable_paths_init(&resolved_configurable_paths);
+  patterndb_file = get_installation_path_for(patterndb_file);
+  app_startup();
+  pattern_db_global_init();
   configuration = cfg_new_snippet();
 
   if (!g_option_context_parse(ctx, &argc, &argv, &error))
@@ -1291,16 +1361,9 @@ main(int argc, char *argv[])
     colors = full_colors;
 
   ret = modes[mode].main(argc, argv);
-  scratch_buffers_allocator_deinit();
-  scratch_buffers_global_deinit();
-  log_tags_global_deinit();
-  log_msg_global_deinit();
-  stats_destroy();
-
   cfg_free(configuration);
   configuration = NULL;
-  crypto_deinit();
-  msg_deinit();
-  main_loop_thread_resource_deinit();
+
+  app_shutdown();
   return ret;
 }

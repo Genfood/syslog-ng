@@ -20,6 +20,7 @@ include modules/timestamp/Makefile.am
 include modules/correlation/Makefile.am
 include modules/diskq/Makefile.am
 include modules/examples/Makefile.am
+include modules/ebpf/Makefile.am
 include modules/geoip2/Makefile.am
 include modules/getent/Makefile.am
 include modules/graphite/Makefile.am
@@ -52,6 +53,8 @@ include modules/xml/Makefile.am
 include modules/regexp-parser/Makefile.am
 include modules/rate-limit-filter/Makefile.am
 include modules/metrics-probe/Makefile.am
+include modules/grpc/Makefile.am
+include modules/cloud-auth/Makefile.am
 
 SYSLOG_NG_CORE_JAR=$(top_builddir)/modules/java/syslog-ng-core/libs/syslog-ng-core.jar
 
@@ -66,7 +69,8 @@ SYSLOG_NG_MODULES	=	\
 	mod-native mod-cef mod-add-contextual-data mod-diskq mod-getent \
 	mod-map-value-pairs mod-tags-parser mod-xml \
 	mod-appmodel mod-openbsd mod-snmp mod-secure-logging \
-	mod-mqtt mod-regexp-parser mod-rate-limit-filter mod-metrics-probe
+	mod-mqtt mod-regexp-parser mod-rate-limit-filter mod-metrics-probe \
+	mod-grpc mod-cloud-auth
 
 modules modules/: ${SYSLOG_NG_MODULES}
 

@@ -32,10 +32,13 @@
 #include "str-format.h"
 #include "utf8utils.h"
 #include "str-utils.h"
+#include "syslog-names.h"
 
 #include <regex.h>
 #include <ctype.h>
 #include <string.h>
+
+#define SD_NAME_SIZE 256
 
 static const char aix_fwd_string[] = "Message forwarded from ";
 static const char repeat_msg_string[] = "last message repeated";
@@ -44,7 +47,6 @@ static struct
   gboolean initialized;
   NVHandle is_synced;
   NVHandle cisco_seqid;
-  NVHandle raw_message;
 } handles;
 
 static inline gboolean
@@ -543,14 +545,16 @@ _syslog_format_parse_sd(LogMessage *msg, const guchar **data, gint *length, cons
   gboolean ret = FALSE;
   const guchar *src = *data;
   /* ASCII string */
-  gchar sd_id_name[256];
+  gchar sd_id_name[SD_NAME_SIZE];
   gsize sd_id_len;
-  gchar sd_param_name[256];
+  gchar sd_param_name[SD_NAME_SIZE];
 
   /* UTF-8 string */
   gchar sd_param_value[options->sdata_param_value_max + 1];
   gsize sd_param_value_len;
-  gchar sd_value_name[256];
+  gchar sd_value_name[SD_NAME_SIZE];
+
+  g_assert(options->sdata_prefix_len < SD_NAME_SIZE);
 
   guint open_sd = 0;
   gint left = *length, pos;
@@ -572,7 +576,6 @@ _syslog_format_parse_sd(LogMessage *msg, const guchar **data, gint *length, cons
           pos = 0;
           while (left && *src != ' ' && *src != ']')
             {
-              /* the sd_id_name is max 255, the other chars are only stored in the msg->sd_str*/
               if (pos < sizeof(sd_id_name) - 1 - options->sdata_prefix_len)
                 {
                   if (isascii(*src) && *src != '=' && *src != ' ' && *src != ']' && *src != '"')
@@ -598,7 +601,7 @@ _syslog_format_parse_sd(LogMessage *msg, const guchar **data, gint *length, cons
           sd_id_name[pos] = 0;
           sd_id_len = pos;
           strcpy(sd_value_name, options->sdata_prefix);
-          strncpy(sd_value_name + options->sdata_prefix_len, sd_id_name, sizeof(sd_value_name) - options->sdata_prefix_len);
+          g_strlcpy(sd_value_name + options->sdata_prefix_len, sd_id_name, sizeof(sd_value_name) - options->sdata_prefix_len);
 
           if (left && *src == ']')
             {
@@ -606,8 +609,14 @@ _syslog_format_parse_sd(LogMessage *msg, const guchar **data, gint *length, cons
             }
           else
             {
+              if (options->sdata_prefix_len + pos + 1 >= sizeof(sd_value_name))
+                goto error;
+
               sd_value_name[options->sdata_prefix_len + pos] = '.';
+              sd_value_name[options->sdata_prefix_len + pos + 1] = 0;
             }
+
+          g_assert(sd_id_len < sizeof(sd_param_name));
 
           /* read sd-element */
           while (left && *src != ']')
@@ -641,8 +650,12 @@ _syslog_format_parse_sd(LogMessage *msg, const guchar **data, gint *length, cons
                   _skip_char(&src, &left);
                 }
               sd_param_name[pos] = 0;
-              strncpy(&sd_value_name[options->sdata_prefix_len + 1 + sd_id_len], sd_param_name,
-                      sizeof(sd_value_name) - options->sdata_prefix_len - 1 - sd_id_len);
+              gsize sd_param_name_len = g_strlcpy(&sd_value_name[options->sdata_prefix_len + 1 + sd_id_len],
+                                                  sd_param_name,
+                                                  sizeof(sd_value_name) - options->sdata_prefix_len - 1 - sd_id_len);
+
+              if (sd_param_name_len >= sizeof(sd_value_name) - options->sdata_prefix_len - 1 - sd_id_len)
+                goto error;
 
               if (left && *src == '=')
                 _skip_char(&src, &left);
@@ -840,7 +853,7 @@ _syslog_format_parse_legacy_header(LogMessage *msg, const guchar **data, gint *l
       /* Different format */
 
       /* A kernel message? Use 'kernel' as the program name. */
-      if (((msg->pri & LOG_FACMASK) == LOG_KERN && (parse_options->flags & LP_LOCAL) != 0))
+      if (((msg->pri & SYSLOG_FACMASK) == LOG_KERN && (parse_options->flags & LP_LOCAL) != 0))
         {
           log_msg_set_value(msg, LM_V_PROGRAM, "kernel", 6);
         }
@@ -1059,7 +1072,6 @@ syslog_format_init(void)
     {
       handles.is_synced = log_msg_get_value_handle(".SDATA.timeQuality.isSynced");
       handles.cisco_seqid = log_msg_get_value_handle(".SDATA.meta.sequenceId");
-      handles.raw_message = log_msg_get_value_handle("RAWMSG");
       handles.initialized = TRUE;
     }
 

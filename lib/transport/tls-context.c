@@ -317,6 +317,7 @@ tls_context_setup_sigalgs(TLSContext *self)
 static gboolean
 tls_context_setup_cmd_context(TLSContext *self)
 {
+#if SYSLOG_NG_HAVE_DECL_SSL_CONF_CTX_NEW
   SSL_CONF_CTX *ssl_conf_ctx = SSL_CONF_CTX_new();
   const int ctx_flags = SSL_CONF_FLAG_FILE | SSL_CONF_FLAG_CLIENT | SSL_CONF_FLAG_SERVER |
                         SSL_CONF_FLAG_CERTIFICATE | SSL_CONF_FLAG_SHOW_ERRORS;
@@ -346,6 +347,12 @@ tls_context_setup_cmd_context(TLSContext *self)
 
   SSL_CONF_CTX_free(ssl_conf_ctx);
   return result;
+#else
+  if (self->conf_cmds_list != NULL)
+    return FALSE;
+  else
+    return TRUE;
+#endif
 }
 
 static PKCS12 *
@@ -460,6 +467,74 @@ tls_context_load_key_and_cert(TLSContext *self)
   return TLS_CONTEXT_OK;
 }
 
+static void
+_ca_list_free(STACK_OF(X509_NAME) *ca_list)
+{
+  for (gint i = 0; i < sk_X509_NAME_num(ca_list); i++)
+    X509_NAME_free(sk_X509_NAME_value(ca_list, i));
+  sk_X509_NAME_free(ca_list);
+}
+
+static gboolean
+_set_client_ca_list(TLSContext *self)
+{
+#if SYSLOG_NG_HAVE_DECL_SSL_ADD_DIR_CERT_SUBJECTS_TO_STACK && SYSLOG_NG_HAVE_DECL_SSL_ADD_FILE_CERT_SUBJECTS_TO_STACK
+
+  STACK_OF(X509_NAME) *ca_list = sk_X509_NAME_new_null();
+  const STACK_OF(X509_NAME) *existing_ca_list = SSL_CTX_get_client_CA_list(self->ssl_ctx);
+
+  for (gint i = 0; i < sk_X509_NAME_num(existing_ca_list); i++)
+    {
+      sk_X509_NAME_push(ca_list, X509_NAME_dup(sk_X509_NAME_value(existing_ca_list, i)));
+    }
+
+  if (_is_file_accessible(self, self->ca_dir) && !SSL_add_dir_cert_subjects_to_stack(ca_list, self->ca_dir))
+    {
+      _ca_list_free(ca_list);
+      return FALSE;
+    }
+
+  if (_is_file_accessible(self, self->ca_file) && !SSL_add_file_cert_subjects_to_stack(ca_list, self->ca_file))
+    {
+      _ca_list_free(ca_list);
+      return FALSE;
+    }
+
+  SSL_CTX_set_client_CA_list(self->ssl_ctx, ca_list);
+  return TRUE;
+#else
+  msg_warning_once("Setting the client CA list based on the ca-file() and ca-dir() options is not supported with the "
+                   "OpenSSL version syslog-ng was compiled with");
+  return TRUE;
+#endif
+}
+
+gboolean
+tls_context_verify_peer(TLSContext *self, X509 *peer_cert, const gchar *peer_name)
+{
+  if ((tls_context_get_verify_mode(self) & TVM_TRUSTED) == 0)
+    {
+      msg_warning("Bypassing certificate validation, peer certificate is always accepted");
+      return TRUE;
+    }
+
+  if (!peer_name)
+    return TRUE;
+
+  if (!tls_verify_certificate_name(peer_cert, peer_name))
+    {
+      if (tls_context_ignore_hostname_mismatch(self))
+        {
+          msg_warning("Ignoring certificate subject validation error due to options(ignore-hostname-mismatch)",
+                      evt_tag_str("hostname", peer_name));
+          return TRUE;
+        }
+      return FALSE;
+    }
+
+  return TRUE;
+}
+
 TLSContextSetupResult
 tls_context_setup_context(TLSContext *self)
 {
@@ -496,6 +571,9 @@ tls_context_setup_context(TLSContext *self)
     goto error;
 
   if (_is_file_accessible(self, self->crl_dir) && !SSL_CTX_load_verify_locations(self->ssl_ctx, NULL, self->crl_dir))
+    goto error;
+
+  if (self->mode == TM_SERVER && !_set_client_ca_list(self))
     goto error;
 
   if (self->crl_dir)
@@ -617,6 +695,10 @@ tls_context_set_ssl_options_by_name(TLSContext *self, GList *options)
       else if (strcasecmp(l->data, "ignore-unexpected-eof") == 0 || strcasecmp(l->data, "ignore_unexpected_eof") == 0)
         self->ssl_options |= TSO_IGNORE_UNEXPECTED_EOF;
 #endif
+      else if (strcasecmp(l->data, "ignore-hostname-mismatch") == 0 || strcasecmp(l->data, "ignore_hostname_mismatch") == 0)
+        self->ssl_options |= TSO_IGNORE_HOSTNAME_MISMATCH;
+      else if (strcasecmp(l->data, "ignore-validity-period") == 0 || strcasecmp(l->data, "ignore_validity_period") == 0)
+        self->ssl_options |= TSO_IGNORE_VALIDITY_PERIOD;
       else
         return FALSE;
     }
@@ -634,6 +716,18 @@ void
 tls_context_set_verify_mode(TLSContext *self, gint verify_mode)
 {
   self->verify_mode = verify_mode;
+}
+
+gboolean
+tls_context_ignore_hostname_mismatch(TLSContext *self)
+{
+  return self->ssl_options & TSO_IGNORE_HOSTNAME_MISMATCH;
+}
+
+gboolean
+tls_context_ignore_validity_period(TLSContext *self)
+{
+  return self->ssl_options & TSO_IGNORE_VALIDITY_PERIOD;
 }
 
 static int
@@ -772,9 +866,15 @@ tls_context_set_client_sigalgs(TLSContext *self, const gchar *sigalgs, GError **
 gboolean
 tls_context_set_conf_cmds(TLSContext *self, GList *cmds, GError **error)
 {
+#if SYSLOG_NG_HAVE_DECL_SSL_CONF_CTX_NEW
   g_list_foreach(self->conf_cmds_list, (GFunc) g_free, NULL);
   self->conf_cmds_list = cmds;
   return TRUE;
+#else
+  g_set_error(error, TLSCONTEXT_ERROR, TLSCONTEXT_UNSUPPORTED,
+              "Setting SSL conf context is not supported with the OpenSSL version syslog-ng was compiled with");
+  return FALSE;
+#endif
 }
 
 void

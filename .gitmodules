@@ -1,4 +1,11 @@
 [submodule "lib/ivykis"]
-        path = lib/ivykis
-        url = https://github.com/buytenh/ivykis.git
-        ignore = dirty
+	path = lib/ivykis
+	url = https://github.com/bazsi/ivykis.git
+	ignore = dirty
+	branch = tip/syslog-ng
+[submodule "modules/grpc/otel/opentelemetry-proto"]
+	path = modules/grpc/protos/opentelemetry-proto
+	url = https://github.com/open-telemetry/opentelemetry-proto.git
+[submodule "modules/cloud-auth/jwt-cpp"]
+	path = modules/cloud-auth/jwt-cpp
+	url = https://github.com/Thalhammer/jwt-cpp.git

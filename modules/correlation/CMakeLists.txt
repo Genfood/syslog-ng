@@ -39,6 +39,8 @@ set(PATTERNDB_SOURCES
     timerwheel.h
     patternize.c
     patternize.h
+    id-counter.h
+    id-counter.c
 )
 
 set(PATTERNDB_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -64,6 +66,10 @@ set(CORRELATION_SOURCES
     correlation-plugin.c
     groupingby.c
     groupingby.h
+    grouping-parser.c
+    grouping-parser.h
+    group-lines.c
+    group-lines.h
 )
 
 add_module(

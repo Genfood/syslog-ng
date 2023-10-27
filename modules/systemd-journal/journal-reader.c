@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2023 One Identity LLC.
  * Copyright (c) 2010-2014 Balabit
  * Copyright (c) 2010-2014 Viktor Juhasz <viktor.juhasz@balabit.com>
  *
@@ -46,7 +47,12 @@
 #define DEFAULT_PRIO (LOG_LOCAL0 | LOG_NOTICE)
 #define DEFAULT_FETCH_LIMIT 10
 
+
+#if SYSLOG_NG_HAVE_JOURNAL_NAMESPACES
+GList *used_namespaces = NULL;
+#else
 static gboolean journal_reader_initialized = FALSE;
+#endif
 
 typedef struct _JournalReaderState
 {
@@ -70,7 +76,7 @@ struct _JournalReader
   struct iv_event schedule_wakeup;
   struct iv_task restart_task;
   MainLoopIOWorkerJob io_job;
-  gboolean watches_running:1, suspended:1;
+  guint watches_running:1, suspended:1;
   gint notify_code;
   gboolean immediate_check;
 
@@ -305,6 +311,22 @@ _handle_message(JournalReader *self)
   log_source_post(&self->super, msg);
   return log_source_free_to_send(&self->super);
 }
+
+#if SYSLOG_NG_HAVE_JOURNAL_NAMESPACES
+static gboolean
+_namespace_is_already_in_use(JournalReader *self, const gchar *namespace)
+{
+  GList *item = g_list_find_custom(used_namespaces, namespace, (GCompareFunc)strcmp);
+  if (item == NULL)
+    {
+      used_namespaces = g_list_prepend(used_namespaces, (gpointer)namespace);
+      return FALSE;
+    }
+
+  msg_error("systemd-journal namespace already in use", evt_tag_str("namespace", namespace));
+  return TRUE;
+}
+#endif
 
 static gboolean
 _alloc_state(JournalReader *self)
@@ -542,7 +564,7 @@ _fetch_log(JournalReader *self)
 }
 
 static void
-_work_finished(gpointer s)
+_work_finished(gpointer s, gpointer arg)
 {
   JournalReader *self = (JournalReader *) s;
   if (self->notify_code)
@@ -559,7 +581,7 @@ _work_finished(gpointer s)
 }
 
 static void
-_work_perform(gpointer s, GIOCondition cond)
+_work_perform(gpointer s, gpointer arg)
 {
   JournalReader *self = (JournalReader *) s;
   self->notify_code = _fetch_log(self);
@@ -586,15 +608,15 @@ _io_process_input(gpointer s)
   _stop_watches(self);
   if ((self->options->flags & JR_THREADED))
     {
-      main_loop_io_worker_job_submit(&self->io_job, G_IO_IN);
+      main_loop_io_worker_job_submit(&self->io_job, NULL);
     }
   else
     {
       if (!main_loop_worker_job_quit())
         {
           log_pipe_ref(&self->super.super);
-          _work_perform(s, G_IO_IN);
-          _work_finished(s);
+          _work_perform(s, NULL);
+          _work_finished(s, NULL);
           log_pipe_unref(&self->super.super);
         }
     }
@@ -720,17 +742,22 @@ _journal_apply_matches(JournalReader *self)
   return TRUE;
 }
 
-static void
+static gboolean
 _init_persist_name(JournalReader *self)
 {
 #if SYSLOG_NG_HAVE_JOURNAL_NAMESPACES
   if (strcmp(self->options->namespace, "*") != 0)
     {
       self->persist_name = g_strdup_printf("systemd_journal(%s)", self->options->namespace);
-      return;
     }
+  else
+    {
+      self->persist_name = g_strdup("systemd-journal");
+    }
+  return !_namespace_is_already_in_use(self, self->options->namespace);
 #endif
   self->persist_name = g_strdup("systemd-journal");
+  return TRUE;
 }
 
 static gboolean
@@ -738,13 +765,19 @@ _init(LogPipe *s)
 {
   JournalReader *self = (JournalReader *)s;
 
+#ifndef SYSLOG_NG_HAVE_JOURNAL_NAMESPACES
   if (journal_reader_initialized)
     {
       msg_error("The configuration must not contain more than one systemd-journal() source");
       return FALSE;
     }
+#endif
 
-  _init_persist_name(self);
+  if (! _init_persist_name(self))
+    {
+      msg_error("The configuration must not contain more than one systemd-journal() source with the same namespace() option");
+      return FALSE;
+    }
 
   if (!log_source_init(s))
     return FALSE;
@@ -774,7 +807,9 @@ _init(LogPipe *s)
     }
 
   self->immediate_check = TRUE;
+#ifndef SYSLOG_NG_HAVE_JOURNAL_NAMESPACES
   journal_reader_initialized = TRUE;
+#endif
   _update_watches(self);
   iv_event_register(&self->schedule_wakeup);
   return TRUE;
@@ -784,10 +819,17 @@ static gboolean
 _deinit(LogPipe *s)
 {
   JournalReader *self = (JournalReader *)s;
+
+#if SYSLOG_NG_HAVE_JOURNAL_NAMESPACES
+  GList *link = g_list_find(used_namespaces, self->options->namespace);
+  if (link) used_namespaces = g_list_delete_link(used_namespaces, link);
+#else
+  journal_reader_initialized = FALSE;
+#endif
+
   _stop_watches(self);
   sd_journal_close(self->journal);
   poll_events_free(self->poll_events);
-  journal_reader_initialized = FALSE;
   return TRUE;
 }
 
@@ -809,11 +851,11 @@ journal_reader_get_sd_journal(JournalReader *self)
 
 void
 journal_reader_set_options(LogPipe *s, LogPipe *control, JournalReaderOptions *options,
-                           const gchar *stats_id, const gchar *stats_instance)
+                           const gchar *stats_id, StatsClusterKeyBuilder *kb)
 {
   JournalReader *self = (JournalReader *) s;
 
-  log_source_set_options(&self->super, &options->super, stats_id, stats_instance,
+  log_source_set_options(&self->super, &options->super, stats_id, kb,
                          (options->flags & JR_THREADED), control->expr_node);
   log_source_set_ack_tracker_factory(&self->super, consecutive_ack_tracker_factory_new());
 
@@ -837,8 +879,8 @@ _init_watches(JournalReader *self)
 
   main_loop_io_worker_job_init(&self->io_job);
   self->io_job.user_data = self;
-  self->io_job.work = (void (*)(void *, GIOCondition)) _work_perform;
-  self->io_job.completion = (void (*)(void *)) _work_finished;
+  self->io_job.work = _work_perform;
+  self->io_job.completion = _work_finished;
   self->io_job.engage = (void (*)(void *)) log_pipe_ref;
   self->io_job.release = (void (*)(void *)) log_pipe_unref;
 }

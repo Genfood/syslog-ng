@@ -164,6 +164,8 @@ enum _LogMessageValueType
   LM_VT_DATETIME = 6,
   LM_VT_LIST = 7,
   LM_VT_NULL = 8,
+  LM_VT_BYTES = 9,
+  LM_VT_PROTOBUF = 10,
 
   /* extremal value to indicate "unset" state.
    *
@@ -180,7 +182,7 @@ typedef struct _LogMessageQueueNode
 {
   struct iv_list_head list;
   LogMessage *msg;
-  gboolean ack_needed:1, embedded:1, flow_control_requested:1;
+  guint ack_needed:1, embedded:1, flow_control_requested:1;
 } LogMessageQueueNode;
 
 
@@ -210,6 +212,8 @@ struct _LogMessage
    * a LogMessage */
 
   guint allocated_bytes;
+
+  guint32 recvd_rawmsg_size;
 
   AckRecord *ack_record;
   LMAckFunc ack_func;
@@ -254,7 +258,7 @@ struct _LogMessage
 
   guint8 num_nodes;
   guint8 cur_node;
-  guint8 protected;
+  guint8 write_protected;
 
 
   /* preallocated LogQueueNodes used to insert this message into a LogQueue */
@@ -275,7 +279,7 @@ void log_msg_write_protect(LogMessage *m);
 static inline gboolean
 log_msg_is_write_protected(const LogMessage *self)
 {
-  return self->protected;
+  return self->write_protected;
 }
 
 LogMessage *log_msg_clone_cow(LogMessage *msg, const LogPathOptions *path_options);
@@ -466,10 +470,6 @@ void log_msg_format_sdata(const LogMessage *self, GString *result, guint32 seq_n
 void log_msg_set_tag_by_id_onoff(LogMessage *self, LogTagId id, gboolean on);
 void log_msg_set_tag_by_id(LogMessage *self, LogTagId id);
 void log_msg_set_tag_by_name(LogMessage *self, const gchar *name);
-void log_msg_set_saddr(LogMessage *self, GSockAddr *saddr);
-void log_msg_set_saddr_ref(LogMessage *self, GSockAddr *saddr);
-void log_msg_set_daddr(LogMessage *self, GSockAddr *daddr);
-void log_msg_set_daddr_ref(LogMessage *self, GSockAddr *daddr);
 void log_msg_clear_tag_by_id(LogMessage *self, LogTagId id);
 void log_msg_clear_tag_by_name(LogMessage *self, const gchar *name);
 gboolean log_msg_is_tag_by_id(LogMessage *self, LogTagId id);
@@ -477,6 +477,19 @@ gboolean log_msg_is_tag_by_name(LogMessage *self, const gchar *name);
 void log_msg_tags_foreach(const LogMessage *self, LogMessageTagsForeachFunc callback, gpointer user_data);
 void log_msg_format_tags(const LogMessage *self, GString *result);
 void log_msg_format_matches(const LogMessage *self, GString *result);
+
+
+static inline void
+log_msg_set_recvd_rawmsg_size(LogMessage *self, guint32 size)
+{
+  self->recvd_rawmsg_size = size;
+}
+
+void log_msg_set_saddr(LogMessage *self, GSockAddr *saddr);
+void log_msg_set_saddr_ref(LogMessage *self, GSockAddr *saddr);
+void log_msg_set_daddr(LogMessage *self, GSockAddr *daddr);
+void log_msg_set_daddr_ref(LogMessage *self, GSockAddr *daddr);
+
 
 LogMessageQueueNode *log_msg_alloc_queue_node(LogMessage *msg, const LogPathOptions *path_options);
 LogMessageQueueNode *log_msg_alloc_dynamic_queue_node(LogMessage *msg, const LogPathOptions *path_options);

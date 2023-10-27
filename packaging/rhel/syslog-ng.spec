@@ -1,5 +1,5 @@
 Name: syslog-ng
-Version: 4.0.1
+Version: 4.4.0
 Release: 2%{?dist}
 Summary: Next-generation syslog server
 
@@ -46,6 +46,12 @@ Source4: syslog-ng.logrotate7
 %bcond_with java
 %endif
 
+%if 0%{?rhel} == 7
+%bcond_with cloud_auth
+%else
+%bcond_without cloud_auth
+%endif
+
 %global ivykis_ver 0.36.1
 
 BuildRequires: pkgconfig
@@ -60,7 +66,7 @@ BuildRequires: libcap-devel
 BuildRequires: libdbi-devel
 BuildRequires: libnet-devel
 BuildRequires: openssl-devel
-BuildRequires: pcre-devel
+BuildRequires: pcre2-devel
 BuildRequires: libuuid-devel
 BuildRequires: libesmtp-devel
 BuildRequires: libcurl-devel
@@ -122,9 +128,6 @@ Requires: logrotate
 Requires: ivykis >= %{ivykis_ver}
 
 Provides: syslog
-# merge separate syslog-vim package into one
-Provides: syslog-ng-vim = %{version}-%{release}
-Obsoletes: syslog-ng-vim < 2.0.8-1
 
 # Fedora 17’s unified filesystem (/usr-move)
 Conflicts: filesystem < 3
@@ -204,6 +207,14 @@ Requires: %{name}%{?_isa} = %{version}-%{release}
 
 %description mqtt
 This module supports sending logs to mqtt through MQTT.
+
+%package cloud-auth
+Summary: cloud auth support for %{name}
+Group: Development/Libraries
+Requires: %{name}%{?_isa} = %{version}-%{release}
+
+%description cloud-auth
+This module supports authentication to cloud providers.
 
 %package java
 Summary:        Java destination support for syslog-ng
@@ -327,6 +338,7 @@ ryslog is not on the system.
     --with-python=%{py_ver} \
     %{?with_kafka:--enable-kafka} \
     %{?with_mqtt:--enable-mqtt} \
+    %{?with_cloud_auth:--enable-cloud-auth} %{!?with_cloud_auth:--disable-cloud-auth} \
     %{?with_afsnmp:--enable-afsnmp} %{!?with_afsnmp:--disable-afsnmp} \
     %{?with_java:--enable-java} %{!?with_java:--disable-java} \
     %{?with_maxminddb:--enable-geoip2} %{!?with_maxminddb:--disable-geoip2} \
@@ -375,15 +387,6 @@ rm %{buildroot}/usr/lib/systemd/system/syslog-ng@.service
 %{__install} -p -m 644 config.h %{buildroot}%{_includedir}/%{name}
 %{__install} -p -m 644 lib/*.h %{buildroot}%{_includedir}/%{name}
 
-# install vim files
-%{__install} -d -m 755 %{buildroot}%{_datadir}/%{name}
-%{__install} -p -m 644 contrib/syslog-ng.vim %{buildroot}%{_datadir}/%{name}
-for vimver in 73 ; do
-    %{__install} -d -m 755 %{buildroot}%{_datadir}/vim/vim$vimver/syntax
-    cd %{buildroot}%{_datadir}/vim/vim$vimver/syntax
-    ln -s ../../../%{name}/syslog-ng.vim .
-    cd -
-done
 
 find %{buildroot} -name "*.la" -exec rm -f {} \;
 
@@ -406,27 +409,6 @@ if /sbin/chkconfig --level 3 %{name} ; then
 fi
 
 
-%triggerin -- vim-common
-VIMVERNEW=`rpm -q --qf='%%{epoch}:%%{version}\n' vim-common | sort | tail -n 1 | sed -e 's/[0-9]*://' | sed -e 's/\.[0-9]*$//' | sed -e 's/\.//'`
-[ -d %{_datadir}/vim/vim${VIMVERNEW}/syntax ] && \
-    cd %{_datadir}/vim/vim${VIMVERNEW}/syntax && \
-    ln -sf ../../../%{name}/syslog-ng.vim . || :
-
-%triggerun -- vim-common
-VIMVEROLD=`rpm -q --qf='%%{epoch}:%%{version}\n' vim-common | sort | head -n 1 | sed -e 's/[0-9]*://' | sed -e 's/\.[0-9]*$//' | sed -e 's/\.//'`
-[ $2 = 0 ] && rm -f %{_datadir}/vim/vim${VIMVEROLD}/syntax/syslog-ng.vim || :
-
-%triggerpostun -- vim-common
-VIMVEROLD=`rpm -q --qf='%%{epoch}:%%{version}\n' vim-common | sort | head -n 1 | sed -e 's/[0-9]*://' | sed -e 's/\.[0-9]*$//' | sed -e 's/\.//'`
-VIMVERNEW=`rpm -q --qf='%%{epoch}:%%{version}\n' vim-common | sort | tail -n 1 | sed -e 's/[0-9]*://' | sed -e 's/\.[0-9]*$//' | sed -e 's/\.//'`
-if [ $1 = 1 ]; then
-    rm -f %{_datadir}/vim/vim${VIMVEROLD}/syntax/syslog-ng.vim || :
-    [ -d %{_datadir}/vim/vim${VIMVERNEW}/syntax ] && \
-        cd %{_datadir}/vim/vim${VIMVERNEW}/syntax && \
-        ln -sf ../../../%{name}/syslog-ng.vim . || :
-fi
-
-
 %files
 %doc AUTHORS COPYING NEWS.md
 # %doc doc/security/*.txt
@@ -436,7 +418,7 @@ fi
 %dir %{_sysconfdir}/%{name}/conf.d
 %dir %{_sysconfdir}/%{name}/patterndb.d
 %config(noreplace) %{_sysconfdir}/%{name}/%{name}.conf
-%config(noreplace) %{_sysconfdir}/%{name}/scl.conf
+%config(noreplace) %{_datadir}/%{name}/include/scl.conf
 %if 0%{?rhel} == 7
 %config(noreplace) %{_sysconfdir}/logrotate.d/syslog
 %endif
@@ -496,15 +478,12 @@ fi
 %dir %{_libdir}/%{name}/loggen
 %{_libdir}/%{name}/loggen/libloggen*
 
-%dir %{_datadir}/%{name}
-%{_datadir}/%{name}/syslog-ng.vim
-%ghost %{_datadir}/vim/
-
 # scl files
 %{_datadir}/%{name}/include/
 
 # uhm, some better places for those?
 %{_datadir}/%{name}/xsd/
+%{_datadir}/%{name}/smart-multi-line.fsm
 
 %{_mandir}/man1/loggen.1*
 %{_mandir}/man1/pdbtool.1*
@@ -548,6 +527,11 @@ fi
 %if %{with mqtt}
 %files mqtt
 %{_libdir}/%{name}/libmqtt.so
+%endif
+
+%if %{with cloud_auth}
+%files cloud-auth
+%{_libdir}/%{name}/libcloud_auth.so
 %endif
 
 %files smtp
@@ -629,6 +613,24 @@ fi
 
 
 %changelog
+* Tue Sep 19 2023 github-actions <41898282+github-actions@users.noreply.github.com> - 4.4.0-1
+- updated to 4.4.0
+
+* Fri Jul 28 2023 github-actions <41898282+github-actions@users.noreply.github.com> - 4.3.1-1
+- updated to 4.3.1
+
+* Wed Jul 19 2023 github-actions <41898282+github-actions@users.noreply.github.com> - 4.3.0-1
+- updated to 4.3.0
+
+* Mon May  8 2023 github-actions <41898282+github-actions@users.noreply.github.com> - 4.2.0-1
+- updated to 4.2.0
+
+* Fri Mar 10 2023 github-actions <41898282+github-actions@users.noreply.github.com> - 4.1.1-1
+- updated to 4.1.1
+
+* Tue Feb 28 2023 github-actions <41898282+github-actions@users.noreply.github.com> - 4.1.0-1
+- updated to 4.1.0
+
 * Wed Dec 21 2022 github-actions <github-actions@github.com> - 4.0.1-1
 - updated to 4.0.1
 

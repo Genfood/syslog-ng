@@ -6,6 +6,7 @@ EXTRA_DIST += \
 	modules/python-modules/syslogng/message.py				\
 	modules/python-modules/syslogng/parser.py				\
 	modules/python-modules/syslogng/persist.py				\
+	modules/python-modules/syslogng/reloc.py				\
 	modules/python-modules/syslogng/source.py				\
 	modules/python-modules/syslogng/template.py				\
 	modules/python-modules/syslogng/debuggercli/__init__.py			\
@@ -50,10 +51,19 @@ EXTRA_DIST += \
 	modules/python-modules/syslogng/modules/example/__init__.py		\
 	modules/python-modules/syslogng/modules/kubernetes/scl/kubernetes.conf	\
 	modules/python-modules/syslogng/modules/kubernetes/__init__.py		\
+	modules/python-modules/syslogng/modules/hypr/tests/test_confgen.py	\
+	modules/python-modules/syslogng/modules/hypr/tests/test_hypr_audit_source.py	\
+	modules/python-modules/syslogng/modules/hypr/scl/hypr.conf		\
+	modules/python-modules/syslogng/modules/hypr/__init__.py		\
+	modules/python-modules/syslogng/modules/s3/__init__.py		\
+	modules/python-modules/syslogng/modules/s3/compressable_file_buffer.py		\
+	modules/python-modules/syslogng/modules/s3/s3_object.py		\
+	modules/python-modules/syslogng/modules/s3/s3_destination.py		\
+	modules/python-modules/syslogng/modules/s3/scl/s3.conf		\
 	modules/python-modules/setup.py						\
 	modules/python-modules/README.md
 
-if ENABLE_PYTHON_MODULES
+if ENABLE_PYTHON
 
 python_sysconf_module_DATA = modules/python-modules/README.md
 
@@ -62,6 +72,14 @@ PYMODULES_BUILDDIR = $(abs_builddir)/$(PYMODULES_PATH)
 PYMODULES_SRCDIR = $(top_srcdir)/modules/python-modules
 PYMODULES_MANIFEST = $(PYMODULES_BUILDDIR)/install-manifest.txt
 PYMODULES_ROOT_MODULE = syslogng
+
+if ENABLE_PYTHON_MODULES
+PYMODULES_BUILTINS_ONLY=0
+else
+PYMODULES_BUILTINS_ONLY=1
+endif
+export PYMODULES_BUILTINS_ONLY
+
 PYTHON_ROOT = $(if $(DESTDIR),$(DESTDIR),/)
 
 INSTALL_EXEC_HOOKS += pymodules-install
@@ -106,13 +124,15 @@ pymodules-clean:
 pymodules-unit: python-venv
 	$(PYTHON_VENV) -m pytest --showlocals --verbosity=3 $(PYMODULES_SRCDIR) -W ignore::UserWarning
 
-pymodules-checks: pymodules-unit pymodules-pep8 pymodules-pylint
+pymodules-checks: pymodules-unit pymodules-pycodestyle pymodules-pylint
 
-pymodules-pep8: python-venv
-	$(PYTHON_VENV) -m pep8 --ignore=E501 $(PYMODULES_SRCDIR)/$(PYMODULES_ROOT_MODULE)
+pymodules-pycodestyle: python-venv
+	$(PYTHON_VENV) -m pycodestyle --ignore=E501,E121,E123,E126,E226,E24,E704,W503,W504 $(PYMODULES_SRCDIR)/$(PYMODULES_ROOT_MODULE)
 
 pymodules-pylint: python-venv
 	$(PYTHON_VENV) -m pylint -r n --rcfile=$(PYMODULES_SRCDIR)/pylintrc $(PYMODULES_SRCDIR)/$(PYMODULES_ROOT_MODULE)
+
+pymodules-linters: pymodules-pycodestyle pymodules-pylint
 
 check_SCRIPTS += modules/python-modules/test_pymodules.sh
 

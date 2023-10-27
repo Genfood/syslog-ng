@@ -7,11 +7,16 @@ bison_target(CfgGrammar
     ${PROJECT_SOURCE_DIR}/lib/cfg-grammar.y
     ${PROJECT_BINARY_DIR}/lib/cfg-grammar.c
     COMPILE_FLAGS ${BISON_FLAGS})
+set_source_files_properties(
+    ${PROJECT_BINARY_DIR}/lib/cfg-grammar.c
+    PROPERTIES
+    COMPILE_FLAGS ${BISON_BUILT_SOURCE_CFLAGS})
 add_flex_bison_dependency(CfgLexer CfgGrammar)
 
 add_subdirectory(ack-tracker)
 add_subdirectory(compat)
 add_subdirectory(control)
+add_subdirectory(healthcheck)
 add_subdirectory(debugger)
 add_subdirectory(filter)
 add_subdirectory(logmsg)
@@ -36,6 +41,7 @@ set(LIB_SUBDIR_HEADERS
     ${ACK_TRACKER_HEADERS}
     ${COMPAT_HEADERS}
     ${CONTROL_HEADERS}
+    ${HEALTHCHECK_HEADERS}
     ${DEBUGGER_HEADERS}
     ${FILTER_HEADERS}
     ${LOGMSG_HEADERS}
@@ -80,6 +86,8 @@ set (LIB_HEADERS
     cfg-path.h
     cfg-tree.h
     cfg-walker.h
+    cfg-persist.h
+    cfg-monitor.h
     children.h
     crypto.h
     dnscache.h
@@ -103,6 +111,8 @@ set (LIB_HEADERS
     logqueue.h
     logreader.h
     logsource.h
+    logscheduler.h
+    logscheduler-pipe.h
     logwriter.h
     mainloop.h
     mainloop-call.h
@@ -112,6 +122,7 @@ set (LIB_HEADERS
     module-config.h
     memtrace.h
     messages.h
+    metrics-pipe.h
     ml-batched-timer.h
     mainloop-control.h
     msg-format.h
@@ -172,6 +183,8 @@ set(LIB_SOURCES
     cfg-path.c
     cfg-tree.c
     cfg-walker.c
+    cfg-persist.c
+    cfg-monitor.c
     children.c
     dnscache.c
     driver.c
@@ -193,6 +206,8 @@ set(LIB_SOURCES
     logqueue.c
     logqueue-fifo.c
     logreader.c
+    logscheduler.c
+    logscheduler-pipe.c
     logsource.c
     logwriter.c
     mainloop.c
@@ -204,6 +219,7 @@ set(LIB_SOURCES
     module-config.c
     memtrace.c
     messages.c
+    metrics-pipe.c
     ml-batched-timer.c
     mainloop-control.c
     msg-format.c
@@ -237,6 +253,7 @@ set(LIB_SOURCES
     ${ACK_TRACKER_SOURCES}
     ${COMPAT_SOURCES}
     ${CONTROL_SOURCES}
+    ${HEALTHCHECK_SOURCES}
     ${DEBUGGER_SOURCES}
     ${FILTER_SOURCES}
     ${LOGMSG_SOURCES}
@@ -269,6 +286,10 @@ bison_target(BlockRefGrammar
     ${PROJECT_BINARY_DIR}/lib/block-ref-grammar.c
     COMPILE_FLAGS ${BISON_FLAGS})
 add_flex_bison_dependency(CfgLexer BlockRefGrammar)
+set_source_files_properties(
+    ${PROJECT_BINARY_DIR}/lib/block-ref-grammar.c
+    PROPERTIES
+    COMPILE_FLAGS ${BISON_BUILT_SOURCE_CFLAGS})
 
 generate_y_from_ym (lib/pragma-grammar)
 bison_target(PragmaGrammar
@@ -276,6 +297,10 @@ bison_target(PragmaGrammar
     ${PROJECT_BINARY_DIR}/lib/pragma-grammar.c
     COMPILE_FLAGS ${BISON_FLAGS})
 add_flex_bison_dependency(CfgLexer PragmaGrammar)
+set_source_files_properties(
+    ${PROJECT_BINARY_DIR}/lib/pragma-grammar.c
+    PROPERTIES
+    COMPILE_FLAGS ${BISON_BUILT_SOURCE_CFLAGS})
 
 generate_y_from_ym (lib/filter/filter-expr-grammar)
 bison_target(FilterExprGrammar
@@ -283,6 +308,10 @@ bison_target(FilterExprGrammar
     ${CMAKE_CURRENT_BINARY_DIR}/filter/filter-expr-grammar.c
     COMPILE_FLAGS ${BISON_FLAGS})
 add_flex_bison_dependency(CfgLexer FilterExprGrammar)
+set_source_files_properties(
+    ${CMAKE_CURRENT_BINARY_DIR}/filter/filter-expr-grammar.c
+    PROPERTIES
+    COMPILE_FLAGS ${BISON_BUILT_SOURCE_CFLAGS})
 
 generate_y_from_ym (lib/rewrite/rewrite-expr-grammar)
 bison_target(RewriteExprGrammar
@@ -290,6 +319,10 @@ bison_target(RewriteExprGrammar
     ${CMAKE_CURRENT_BINARY_DIR}/rewrite/rewrite-expr-grammar.c
     COMPILE_FLAGS ${BISON_FLAGS})
 add_flex_bison_dependency(CfgLexer RewriteExprGrammar)
+set_source_files_properties(
+    ${CMAKE_CURRENT_BINARY_DIR}/rewrite/rewrite-expr-grammar.c
+    PROPERTIES
+    COMPILE_FLAGS ${BISON_BUILT_SOURCE_CFLAGS})
 
 generate_y_from_ym (lib/parser/parser-expr-grammar)
 bison_target(ParserExprGrammar
@@ -297,6 +330,10 @@ bison_target(ParserExprGrammar
     ${CMAKE_CURRENT_BINARY_DIR}/parser/parser-expr-grammar.c
     COMPILE_FLAGS ${BISON_FLAGS})
 add_flex_bison_dependency(CfgLexer ParserExprGrammar)
+set_source_files_properties(
+    ${CMAKE_CURRENT_BINARY_DIR}/parser/parser-expr-grammar.c
+    PROPERTIES
+    COMPILE_FLAGS ${BISON_BUILT_SOURCE_CFLAGS})
 
 set(CORE_INCLUDE_DIRS
     ${Gettext_INCLUDE_DIR}
@@ -353,6 +390,7 @@ install(FILES ${LIB_HEADERS} DESTINATION include/syslog-ng)
 install(FILES ${VALUE_PAIRS_HEADERS} DESTINATION include/syslog-ng/value-pairs)
 install(FILES ${COMPAT_HEADERS} DESTINATION include/syslog-ng/compat)
 install(FILES ${CONTROL_HEADERS} DESTINATION include/syslog-ng/control)
+install(FILES ${HEALTHCHECK_HEADERS} DESTINATION include/syslog-ng/healthcheck)
 install(FILES ${DEBUGGER_HEADERS} DESTINATION include/syslog-ng/debugger)
 install(FILES ${FILTER_HEADERS} DESTINATION include/syslog-ng/filter)
 install(FILES ${LOGMSG_HEADERS} DESTINATION include/syslog-ng/logmsg)

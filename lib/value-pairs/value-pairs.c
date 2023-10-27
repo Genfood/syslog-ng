@@ -253,6 +253,8 @@ vp_pairs_foreach(gpointer data, gpointer user_data)
 
   if (vp->omit_empty_values && sb->len == 0)
     return;
+  if (!vp->include_bytes && (type == LM_VT_BYTES || type == LM_VT_PROTOBUF))
+    return;
   if (vp->cast_to_strings && vpc->template->explicit_type_hint == LM_VT_NONE)
     type = LM_VT_STRING;
   vp_results_insert(results, vp_transform_apply(vp, vpc->name), type, sb);
@@ -271,6 +273,9 @@ vp_msg_nvpairs_foreach(NVHandle handle, const gchar *name,
   GString *sb;
 
   if (vp->omit_empty_values && value_len == 0)
+    return FALSE;
+
+  if ((type == LM_VT_BYTES || type == LM_VT_PROTOBUF) && !vp->include_bytes)
     return FALSE;
 
   inc = (name[0] == '.' && (vp->scopes & VPS_DOT_NV_PAIRS)) ||
@@ -382,7 +387,7 @@ vp_merge_builtins(ValuePairs *vp, VPResults *results, LogMessage *msg, LogTempla
       switch (spec->type)
         {
         case VPT_MACRO:
-          log_macro_expand(spec->id, FALSE, options, msg, sb, &type);
+          log_macro_expand(spec->id, options, msg, sb, &type);
           break;
         case VPT_NVPAIR:
         {
@@ -419,9 +424,19 @@ vp_foreach_helper(const gchar *name, gpointer ndx_as_pointer, gpointer data)
   gpointer user_data = ((gpointer *)data)[2];
   gboolean *r = ((gpointer *)data)[3];
 
-  *r &= !func(name, rv->type_hint,
-              rv->value->str,
-              rv->value->len, user_data);
+  gboolean success = !func(name, rv->type_hint,
+                           rv->value->str,
+                           rv->value->len, user_data);
+
+  *r &= success;
+
+  if (!success)
+    {
+      msg_trace("value_pairs_foreach: callback indicates failure",
+                evt_tag_str("name", name),
+                evt_tag_mem("value", rv->value->str, rv->value->len),
+                evt_tag_int("type", rv->type_hint));
+    }
   return !*r;
 }
 
@@ -961,6 +976,12 @@ gboolean
 value_pairs_is_cast_to_strings_explicit(ValuePairs *vp)
 {
   return vp->explicit_cast_to_strings;
+}
+
+void
+value_pairs_set_include_bytes(ValuePairs *vp, gboolean enable)
+{
+  vp->include_bytes = enable;
 }
 
 ValuePairs *

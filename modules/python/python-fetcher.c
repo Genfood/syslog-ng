@@ -31,16 +31,14 @@
 #include "python-persist.h"
 #include "python-ack-tracker.h"
 #include "python-bookmark.h"
+#include "python-flags.h"
 
 #include <structmember.h>
 
 typedef struct _PythonFetcherDriver
 {
   LogThreadedFetcherDriver super;
-
-  gchar *class;
-  GList *loaders;
-  GHashTable *options;
+  PythonBinding binding;
 
   struct
   {
@@ -65,77 +63,59 @@ typedef struct _PyLogFetcher
 static PyTypeObject py_log_fetcher_type;
 
 
-void
-python_fetcher_set_class(LogDriver *s, gchar *filename)
+PythonBinding *
+python_fetcher_get_binding(LogDriver *s)
 {
   PythonFetcherDriver *self = (PythonFetcherDriver *) s;
 
-  g_free(self->class);
-  self->class = g_strdup(filename);
+  return &self->binding;
 }
 
-void
-python_fetcher_set_option(LogDriver *s, gchar *key, gchar *value)
-{
-  PythonFetcherDriver *self = (PythonFetcherDriver *) s;
-  gchar *normalized_key = __normalize_key(key);
-  g_hash_table_insert(self->options, normalized_key, g_strdup(value));
-}
-
-void
-python_fetcher_set_loaders(LogDriver *s, GList *loaders)
-{
-  PythonFetcherDriver *self = (PythonFetcherDriver *) s;
-
-  string_list_free(self->loaders);
-  self->loaders = loaders;
-}
-
-static const gchar *
-python_fetcher_format_stats_instance(LogThreadedSourceDriver *s)
+static void
+python_fetcher_format_stats_key(LogThreadedSourceDriver *s, StatsClusterKeyBuilder *kb)
 {
   PythonFetcherDriver *self = (PythonFetcherDriver *) s;
 
   PythonPersistMembers options =
   {
     .generate_persist_name_method = self->py.generate_persist_name,
-    .options = self->options,
-    .class = self->class,
+    .options = self->binding.options,
+    .class = self->binding.class,
     .id = self->super.super.super.super.id
   };
 
-  return python_format_stats_instance((LogPipe *)s, "python-fetcher", &options);
+  python_format_stats_key((LogPipe *)s, kb, "python-fetcher", &options);
 }
 
 static void
 _pf_py_invoke_void_method_by_name(PythonFetcherDriver *self, const gchar *method_name)
 {
-  _py_invoke_void_method_by_name(self->py.instance, method_name, self->class, self->super.super.super.super.id);
+  _py_invoke_void_method_by_name(self->py.instance, method_name, self->binding.class, self->super.super.super.super.id);
 }
 
 static gboolean
-_pf_py_invoke_bool_method_by_name_with_args(PythonFetcherDriver *self, const gchar *method_name)
+_pf_py_invoke_bool_method_by_name_with_options(PythonFetcherDriver *self, const gchar *method_name)
 {
-  return _py_invoke_bool_method_by_name_with_args(self->py.instance, method_name, self->options, self->class,
-                                                  self->super.super.super.super.id);
+  return _py_invoke_bool_method_by_name_with_options(self->py.instance, method_name, self->binding.options,
+                                                     self->binding.class, self->super.super.super.super.id);
 }
 
 static void
 _pf_py_invoke_void_function(PythonFetcherDriver *self, PyObject *func, PyObject *arg)
 {
-  return _py_invoke_void_function(func, arg, self->class, self->super.super.super.super.id);
+  return _py_invoke_void_function(func, arg, self->binding.class, self->super.super.super.super.id);
 }
 
 static gboolean
 _pf_py_invoke_bool_function(PythonFetcherDriver *self, PyObject *func, PyObject *arg)
 {
-  return _py_invoke_bool_function(func, arg, self->class, self->super.super.super.super.id);
+  return _py_invoke_bool_function(func, arg, self->binding.class, self->super.super.super.super.id);
 }
 
 static gboolean
 _py_invoke_init(PythonFetcherDriver *self)
 {
-  return _pf_py_invoke_bool_method_by_name_with_args(self, "init");
+  return _pf_py_invoke_bool_method_by_name_with_options(self, "init");
 }
 
 static void
@@ -193,7 +173,7 @@ _py_fetcher_fill_bookmark(PythonFetcherDriver *self, PyLogMessage *pymsg)
     {
       msg_error("python-fetcher: Error in Python fetcher, bookmarks can not be used without creating an AckTracker instance (self.ack_tracker)",
                 evt_tag_str("driver", self->super.super.super.super.id),
-                evt_tag_str("class", self->class));
+                evt_tag_str("class", self->binding.class));
       return FALSE;
     }
 
@@ -215,7 +195,7 @@ _py_fetcher_fill_bookmark(PythonFetcherDriver *self, PyLogMessage *pymsg)
 static ThreadedFetchResult
 _py_invoke_fetch(PythonFetcherDriver *self, LogMessage **msg)
 {
-  PyObject *ret = _py_invoke_function(self->py.fetch_method, NULL, self->class, self->super.super.super.super.id);
+  PyObject *ret = _py_invoke_function(self->py.fetch_method, NULL, self->binding.class, self->super.super.super.super.id);
 
   if (!ret || !PyTuple_Check(ret) || PyTuple_Size(ret) > 2)
     goto error;
@@ -254,7 +234,7 @@ _py_invoke_fetch(PythonFetcherDriver *self, LogMessage **msg)
 error:
   msg_error("python-fetcher: Error in Python fetcher, fetch() must return a tuple (FetchResult, LogMessage)",
             evt_tag_str("driver", self->super.super.super.super.id),
-            evt_tag_str("class", self->class));
+            evt_tag_str("class", self->binding.class));
 
   Py_XDECREF(ret);
   PyErr_Clear();
@@ -288,7 +268,7 @@ _py_free_bindings(PythonFetcherDriver *self)
 static gboolean
 _py_resolve_class(PythonFetcherDriver *self)
 {
-  self->py.class = _py_resolve_qualified_name(self->class);
+  self->py.class = _py_resolve_qualified_name(self->binding.class);
 
   if (!self->py.class)
     {
@@ -296,7 +276,7 @@ _py_resolve_class(PythonFetcherDriver *self)
 
       msg_error("python-fetcher: Error looking up Python driver class",
                 evt_tag_str("driver", self->super.super.super.super.id),
-                evt_tag_str("class", self->class),
+                evt_tag_str("class", self->binding.class),
                 evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
       _py_finish_exception_handling();
       return FALSE;
@@ -308,7 +288,7 @@ _py_resolve_class(PythonFetcherDriver *self)
 static gboolean
 _py_init_instance(PythonFetcherDriver *self)
 {
-  self->py.instance = _py_invoke_function(self->py.class, NULL, self->class, self->super.super.super.super.id);
+  self->py.instance = _py_invoke_function(self->py.class, NULL, self->binding.class, self->super.super.super.super.id);
 
   if (!self->py.instance)
     {
@@ -316,7 +296,7 @@ _py_init_instance(PythonFetcherDriver *self)
 
       msg_error("python-fetcher: Error instantiating Python driver class",
                 evt_tag_str("driver", self->super.super.super.super.id),
-                evt_tag_str("class", self->class),
+                evt_tag_str("class", self->binding.class),
                 evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
       _py_finish_exception_handling();
       return FALSE;
@@ -326,7 +306,7 @@ _py_init_instance(PythonFetcherDriver *self)
     {
       msg_error("python-fetcher: Error initializing Python fetcher, class is not a subclass of LogFetcher",
                 evt_tag_str("driver", self->super.super.super.super.id),
-                evt_tag_str("class", self->class));
+                evt_tag_str("class", self->binding.class));
       return FALSE;
     }
 
@@ -344,7 +324,7 @@ _py_lookup_fetch_method(PythonFetcherDriver *self)
     {
       msg_error("python-fetcher: Error initializing Python fetcher, class does not have a fetch() method",
                 evt_tag_str("driver", self->super.super.super.super.id),
-                evt_tag_str("class", self->class));
+                evt_tag_str("class", self->binding.class));
       return FALSE;
     }
 
@@ -396,7 +376,7 @@ _py_init_object(PythonFetcherDriver *self)
     {
       msg_debug("python-fetcher: Missing Python method, init()",
                 evt_tag_str("driver", self->super.super.super.super.id),
-                evt_tag_str("class", self->class));
+                evt_tag_str("class", self->binding.class));
       return TRUE;
     }
 
@@ -404,7 +384,7 @@ _py_init_object(PythonFetcherDriver *self)
     {
       msg_error("python-fetcher: Error initializing Python driver object, init() returned FALSE",
                 evt_tag_str("driver", self->super.super.super.super.id),
-                evt_tag_str("class", self->class));
+                evt_tag_str("class", self->binding.class));
       return FALSE;
     }
   return TRUE;
@@ -421,7 +401,7 @@ _py_parse_options_new(PythonFetcherDriver *self, MsgFormatOptions *parse_options
 
       msg_error("python-fetcher: Error creating capsule for message parse options",
                 evt_tag_str("driver", self->super.super.super.super.id),
-                evt_tag_str("class", self->class),
+                evt_tag_str("class", self->binding.class),
                 evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
       _py_finish_exception_handling();
       return NULL;
@@ -442,7 +422,7 @@ _py_init_ack_tracker_factory(PythonFetcherDriver *self)
     {
       msg_error("python-fetcher: Python source attribute ack_tracker needs to be an AckTracker subtype",
                 evt_tag_str("driver", self->super.super.super.super.id),
-                evt_tag_str("class", self->class));
+                evt_tag_str("class", self->binding.class));
       return FALSE;
     }
 
@@ -451,6 +431,34 @@ _py_init_ack_tracker_factory(PythonFetcherDriver *self)
   AckTrackerFactory *ack_tracker_factory = self->py.ack_tracker_factory->ack_tracker_factory;
   self->super.super.worker_options.ack_tracker_factory = ack_tracker_factory_ref(ack_tracker_factory);
 
+  return TRUE;
+}
+
+static gboolean
+_py_set_flags(PythonFetcherDriver *self)
+{
+  MsgFormatOptions *parse_options = log_threaded_source_driver_get_parse_options(&self->super.super.super.super);
+  g_assert(parse_options);
+
+  PyObject *flags = python_source_flags_new(parse_options->flags);
+  if (!flags)
+    return FALSE;
+
+  if (PyObject_SetAttrString(self->py.instance, "flags", flags) == -1)
+    {
+      gchar buf[256];
+
+      msg_error("python-fetcher: Error setting flags attribute",
+                evt_tag_str("driver", self->super.super.super.super.id),
+                evt_tag_str("class", self->binding.class),
+                evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
+      _py_finish_exception_handling();
+
+      Py_DECREF(flags);
+      return FALSE;
+    }
+
+  Py_DECREF(flags);
   return TRUE;
 }
 
@@ -469,7 +477,7 @@ _py_set_parse_options(PythonFetcherDriver *self)
 
       msg_error("python-fetcher: Error setting attribute message parse options",
                 evt_tag_str("driver", self->super.super.super.super.id),
-                evt_tag_str("class", self->class),
+                evt_tag_str("class", self->binding.class),
                 evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
       _py_finish_exception_handling();
 
@@ -518,8 +526,10 @@ _py_fetcher_init(PythonFetcherDriver *self)
 {
   PyGILState_STATE gstate = PyGILState_Ensure();
 
-  _py_perform_imports(self->loaders);
   if (!_py_init_bindings(self))
+    goto error;
+
+  if (!_py_set_flags(self))
     goto error;
 
   if (self->py.open_method)
@@ -577,8 +587,8 @@ python_fetcher_format_persist_name(const LogPipe *s)
   PythonPersistMembers options =
   {
     .generate_persist_name_method = self->py.generate_persist_name,
-    .options = self->options,
-    .class = self->class,
+    .options = self->binding.options,
+    .class = self->binding.class,
     .id = self->super.super.super.super.id
   };
 
@@ -589,13 +599,10 @@ static gboolean
 python_fetcher_init(LogPipe *s)
 {
   PythonFetcherDriver *self = (PythonFetcherDriver *) s;
+  GlobalConfig *cfg = log_pipe_get_config(s);
 
-  if (!self->class)
-    {
-      msg_error("python-fetcher: Error initializing Python fetcher, no class() option is specified",
-                evt_tag_str("driver", self->super.super.super.super.id));
-      return FALSE;
-    }
+  if (!python_binding_init(&self->binding, cfg, self->super.super.super.super.id))
+    return FALSE;
 
   self->super.time_reopen = 1;
 
@@ -604,7 +611,7 @@ python_fetcher_init(LogPipe *s)
 
   msg_verbose("python-fetcher: Python fetcher initialized",
               evt_tag_str("driver", self->super.super.super.super.id),
-              evt_tag_str("class", self->class));
+              evt_tag_str("class", self->binding.class));
 
   if (!log_threaded_fetcher_driver_init_method(s))
     return FALSE;
@@ -624,6 +631,8 @@ python_fetcher_deinit(LogPipe *s)
   _py_invoke_deinit(self);
   PyGILState_Release(gstate);
 
+  python_binding_deinit(&self->binding);
+
   return log_threaded_fetcher_driver_deinit_method(s);
 }
 
@@ -636,10 +645,7 @@ python_fetcher_free(LogPipe *s)
   _py_free_bindings(self);
   PyGILState_Release(gstate);
 
-  g_free(self->class);
-  g_hash_table_unref(self->options);
-  string_list_free(self->loaders);
-
+  python_binding_clear(&self->binding);
   log_threaded_fetcher_driver_free_method(s);
 }
 
@@ -654,13 +660,13 @@ python_fetcher_new(GlobalConfig *cfg)
   self->super.super.super.super.super.free_fn = python_fetcher_free;
   self->super.super.super.super.super.generate_persist_name = python_fetcher_format_persist_name;
 
-  self->super.super.format_stats_instance = python_fetcher_format_stats_instance;
+  self->super.super.format_stats_key = python_fetcher_format_stats_key;
   self->super.super.worker_options.super.stats_level = STATS_LEVEL0;
   self->super.super.worker_options.super.stats_source = stats_register_type("python");
 
   self->super.fetch = python_fetcher_fetch;
 
-  self->options = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  python_binding_init_instance(&self->binding);
 
   return &self->super.super.super.super;
 }

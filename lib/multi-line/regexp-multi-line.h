@@ -27,21 +27,7 @@
 #define MULTI_LINE_REGEXP_MULTI_LINE_H_INCLUDED
 
 #include "multi-line/multi-line-logic.h"
-#include "compat/pcre.h"
-
-
-typedef struct _MultiLinePattern MultiLinePattern;
-struct _MultiLinePattern
-{
-  gint ref_cnt;
-  pcre *pattern;
-  pcre_extra *extra;
-};
-
-MultiLinePattern *multi_line_pattern_compile(const gchar *regexp, GError **error);
-MultiLinePattern *multi_line_pattern_ref(MultiLinePattern *self);
-void multi_line_pattern_unref(MultiLinePattern *self);
-
+#include "multi-line/multi-line-pattern.h"
 
 typedef struct _RegexpMultiLine
 {

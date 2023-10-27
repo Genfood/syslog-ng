@@ -187,10 +187,7 @@ Test(basicfuncs, test_str_funcs)
 #if SYSLOG_NG_ENABLE_IPV6
   assert_template_format("$(dns-resolve-ip 1996::04:30)", "resolved-TEST-host");
 #endif
-  start_grabbing_messages();
   assert_template_format("$(dns-resolve-ip --use-dns=no --dns-cache=yes 123.123.123.123)", "123.123.123.123");
-  assert_grabbed_log_contains("WARNING: With use-dns(no), dns-cache() will be forced to 'no' too!");
-  stop_grabbing_messages();
 
   assert_template_format("$(length $HOST $PID)", "5 5");
   assert_template_format("$(length $HOST)", "5");
@@ -662,4 +659,9 @@ ParameterizedTestParameters(basicfuncs, test_filter)
 ParameterizedTest(struct test_params *param, basicfuncs, test_filter)
 {
   assert_template_format(param->template, param->expected);
+}
+
+Test(basicfuncs, test_performance)
+{
+  perftest_template("$(list-search --start-index 1 --mode pcre .az '\"foo,\",\"bar\",\"baz\"')");
 }

@@ -91,6 +91,7 @@ py_log_template_init(PyObject *s, PyObject *args, PyObject *kwds)
   PyLogTemplate *self = (PyLogTemplate *)s;
   const gchar *template_string;
   PyLogTemplateOptions *py_template_options = NULL;
+  GlobalConfig *cfg = _py_get_config_from_main_module()->cfg;
 
   if (!PyArg_ParseTuple(args, "s|O", &template_string, &py_template_options))
     return -1;
@@ -102,7 +103,7 @@ py_log_template_init(PyObject *s, PyObject *args, PyObject *kwds)
       return -1;
     }
 
-  LogTemplate *template = log_template_new(python_get_associated_config(), NULL);
+  LogTemplate *template = log_template_new(cfg, NULL);
   GError *error = NULL;
   if (!log_template_compile(template, template_string, &error))
     {
@@ -118,6 +119,14 @@ py_log_template_init(PyObject *s, PyObject *args, PyObject *kwds)
   Py_XINCREF(py_template_options);
 
   return 0;
+}
+
+PyObject *
+py_log_template_str(PyObject *s)
+{
+  PyLogTemplate *self = (PyLogTemplate *)s;
+
+  return py_string_from_string(self->template->template_str, -1);
 }
 
 void
@@ -145,6 +154,7 @@ PyTypeObject py_log_template_type =
   .tp_methods = py_log_template_methods,
   .tp_new = PyType_GenericNew,
   .tp_init = py_log_template_init,
+  .tp_str = py_log_template_str,
   0,
 };
 

@@ -14,10 +14,11 @@ on:
           "debian-buster",
           "debian-testing",
           "debian-sid",
-          "ubuntu-bionic",
           "debian-bullseye",
+          "debian-bookworm",
           "ubuntu-focal",
-          "ubuntu-jammy"
+          "ubuntu-jammy",
+          "ubuntu-lunar"
         ]'
     secrets:
       azure-sas-token:

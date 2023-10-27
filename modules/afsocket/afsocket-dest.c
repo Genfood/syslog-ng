@@ -357,6 +357,9 @@ afsocket_dd_start_connect(AFSocketDestDriver *self)
       return FALSE;
     }
 
+  if (!socket_options_setup_peer_socket(self->socket_options, sock, self->dest_addr))
+    return FALSE;
+
   rc = g_connect(sock, self->dest_addr);
   if (rc == G_IO_STATUS_NORMAL)
     {
@@ -485,7 +488,41 @@ afsocket_dd_construct_writer_method(AFSocketDestDriver *self)
   if (self->transport_mapper->sock_type == SOCK_STREAM && self->close_on_input)
     writer_flags |= LW_DETECT_EOF;
 
-  return log_writer_new(writer_flags, self->super.super.super.cfg);
+  LogWriter *writer = log_writer_new(writer_flags, self->super.super.super.cfg);
+  log_pipe_set_options((LogPipe *) writer, &self->super.super.super.options);
+
+  return writer;
+}
+
+static void
+_init_stats_key_builders(AFSocketDestDriver *self, StatsClusterKeyBuilder **writer_sck_builder,
+                         StatsClusterKeyBuilder **driver_sck_builder, StatsClusterKeyBuilder **queue_sck_builder)
+{
+  *writer_sck_builder = stats_cluster_key_builder_new();
+  stats_cluster_key_builder_add_label(*writer_sck_builder, stats_cluster_label("driver", "afsocket"));
+  stats_cluster_key_builder_add_legacy_label(*writer_sck_builder, stats_cluster_label("transport",
+                                             self->transport_mapper->transport));
+  stats_cluster_key_builder_add_legacy_label(*writer_sck_builder, stats_cluster_label("address",
+                                             afsocket_dd_get_dest_name(self)));
+
+  *driver_sck_builder = stats_cluster_key_builder_new();
+  stats_cluster_key_builder_add_label(*driver_sck_builder, stats_cluster_label("driver", "afsocket"));
+  stats_cluster_key_builder_add_label(*driver_sck_builder, stats_cluster_label("id", self->super.super.id));
+  stats_cluster_key_builder_add_legacy_label(*driver_sck_builder, stats_cluster_label("transport",
+                                             self->transport_mapper->transport));
+  stats_cluster_key_builder_add_legacy_label(*driver_sck_builder, stats_cluster_label("address",
+                                             afsocket_dd_get_dest_name(self)));
+  stats_cluster_key_builder_set_legacy_alias(*driver_sck_builder,
+                                             self->writer_options.stats_source | SCS_DESTINATION,
+                                             self->super.super.id, afsocket_dd_stats_instance(self));
+
+  *queue_sck_builder = stats_cluster_key_builder_new();
+  stats_cluster_key_builder_add_label(*queue_sck_builder, stats_cluster_label("driver", "afsocket"));
+  stats_cluster_key_builder_add_label(*queue_sck_builder, stats_cluster_label("id", self->super.super.id));
+  stats_cluster_key_builder_add_legacy_label(*queue_sck_builder, stats_cluster_label("transport",
+                                             self->transport_mapper->transport));
+  stats_cluster_key_builder_add_legacy_label(*queue_sck_builder, stats_cluster_label("address",
+                                             afsocket_dd_get_dest_name(self)));
 }
 
 static gboolean
@@ -500,13 +537,25 @@ afsocket_dd_setup_writer(AFSocketDestDriver *self)
 
       self->writer = afsocket_dd_construct_writer(self);
     }
+
+  StatsClusterKeyBuilder *writer_sck_builder;
+  StatsClusterKeyBuilder *driver_sck_builder;
+  StatsClusterKeyBuilder *queue_sck_builder;
+  _init_stats_key_builders(self, &writer_sck_builder, &driver_sck_builder, &queue_sck_builder);
+
   log_pipe_set_config((LogPipe *)self->writer, log_pipe_get_config(&self->super.super.super));
   log_writer_set_options(self->writer, &self->super.super.super,
                          &self->writer_options,
                          self->super.super.id,
-                         afsocket_dd_stats_instance(self));
-  log_writer_set_queue(self->writer, log_dest_driver_acquire_queue(
-                         &self->super, afsocket_dd_format_qfile_name(self)));
+                         writer_sck_builder);
+
+  gint stats_level = log_pipe_is_internal(&self->super.super.super) ? STATS_LEVEL3 : self->writer_options.stats_level;
+  LogQueue *queue = log_dest_driver_acquire_queue(&self->super, afsocket_dd_format_qfile_name(self),
+                                                  stats_level, driver_sck_builder, queue_sck_builder);
+  log_writer_set_queue(self->writer, queue);
+
+  stats_cluster_key_builder_free(queue_sck_builder);
+  stats_cluster_key_builder_free(driver_sck_builder);
 
   if (!log_pipe_init((LogPipe *) self->writer))
     {
@@ -625,7 +674,7 @@ afsocket_dd_save_connection(AFSocketDestDriver *self)
     {
       ReloadStoreItem *item = _reload_store_item_new(self);
       cfg_persist_config_add(cfg, afsocket_dd_format_connections_name(self), item,
-                             (GDestroyNotify)_reload_store_item_free, FALSE);
+                             (GDestroyNotify)_reload_store_item_free);
       self->writer = NULL;
     }
 }

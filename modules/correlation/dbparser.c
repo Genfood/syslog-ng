@@ -50,17 +50,14 @@ struct _LogDBParser
 };
 
 static void
-log_db_parser_emit(LogMessage *msg, gboolean synthetic, gpointer user_data)
+log_db_parser_emit(LogMessage *msg, gpointer user_data)
 {
   LogDBParser *self = (LogDBParser *) user_data;
 
-  if (synthetic)
-    {
-      stateful_parser_emit_synthetic(&self->super, msg);
-      msg_debug("db-parser: emitting synthetic message",
-                evt_tag_str("msg", log_msg_get_value(msg, LM_V_MESSAGE, NULL)),
-                log_pipe_location_tag(&self->super.super.super));
-    }
+  stateful_parser_emit_synthetic(&self->super, msg);
+  msg_debug("db-parser: emitting synthetic message",
+            evt_tag_str("msg", log_msg_get_value(msg, LM_V_MESSAGE, NULL)),
+            log_pipe_location_tag(&self->super.super.super));
 }
 
 static void
@@ -165,7 +162,7 @@ log_db_parser_deinit(LogPipe *s)
       iv_timer_unregister(&self->tick);
     }
 
-  cfg_persist_config_add(cfg, log_db_parser_format_persist_name(self), self->db, (GDestroyNotify) pattern_db_free, FALSE);
+  cfg_persist_config_add(cfg, log_db_parser_format_persist_name(self), self->db, (GDestroyNotify) pattern_db_free);
   self->db = NULL;
   return stateful_parser_deinit_method(s);
 }
@@ -207,7 +204,7 @@ log_db_parser_process(LogParser *s, LogMessage **pmsg, const LogPathOptions *pat
       msg_trace("db-parser message processing started",
                 evt_tag_str("input", input),
                 evt_tag_msg_reference(*pmsg));
-      if (G_UNLIKELY(self->super.super.template))
+      if (G_UNLIKELY(self->super.super.template_obj))
         matched = pattern_db_process_with_custom_message(self->db, *pmsg, input, input_len);
       else
         matched = pattern_db_process(self->db, *pmsg);
@@ -256,11 +253,11 @@ log_db_parser_clone(LogPipe *s)
   LogDBParser *self = (LogDBParser *) s;
 
   cloned = (LogDBParser *) log_db_parser_new(s->cfg);
+  stateful_parser_clone_settings(&self->super, &cloned->super);
   log_db_parser_set_db_file(cloned, self->db_file);
   log_db_parser_set_prefix(cloned, self->prefix);
   log_db_parser_set_drop_unmatched(cloned, self->drop_unmatched);
   log_db_parser_set_program_template_ref(&cloned->super.super, log_template_ref(self->program_template));
-  log_parser_set_template(&cloned->super.super, log_template_ref(self->super.super.template));
   return &cloned->super.super.super;
 }
 

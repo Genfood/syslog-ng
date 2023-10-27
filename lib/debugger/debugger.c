@@ -28,6 +28,7 @@
 #include "apphook.h"
 #include "mainloop.h"
 #include "timeutils/misc.h"
+#include "compat/time.h"
 
 #include <stdio.h>
 #include <unistd.h>
@@ -51,6 +52,17 @@ _format_nvpair(NVHandle handle,
                const gchar *value, gssize length,
                LogMessageValueType type, gpointer user_data)
 {
+  if (type == LM_VT_BYTES || type == LM_VT_PROTOBUF)
+    {
+      printf("%s=", name);
+      for (gssize i = 0; i < length; i++)
+        {
+          const guchar b = (const guchar) value[i];
+          printf("%02hhx", b);
+        }
+      printf("\n");
+      return FALSE;
+    }
   printf("%s=%.*s\n", name, (gint) length, value);
   return FALSE;
 }
@@ -176,7 +188,7 @@ _cmd_display(Debugger *self, gint argc, gchar *argv[])
           return TRUE;
         }
     }
-  printf("display: The template is set to: \"%s\"\n", self->display_template->template);
+  printf("display: The template is set to: \"%s\"\n", self->display_template->template_str);
   return TRUE;
 }
 

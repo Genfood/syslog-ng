@@ -48,7 +48,7 @@ enum
 typedef struct _MsgContext
 {
   guint16 recurse_state;
-  gboolean recurse_warning:1;
+  guint recurse_warning:1;
   gchar recurse_trigger[128];
 } MsgContext;
 
@@ -174,6 +174,19 @@ msg_send_formatted_message(int prio, const char *msg)
       m->recursed = context->recurse_state >= RECURSE_STATE_WATCH;
       msg_post_message(m);
     }
+}
+
+void
+msg_send_message_printf(int prio, const gchar *fmt, ...)
+{
+  gchar buf[1024];
+  va_list va;
+
+  va_start(va, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, va);
+  va_end(va);
+
+  msg_send_formatted_message(prio, buf);
 }
 
 static void

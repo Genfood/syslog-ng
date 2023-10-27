@@ -56,11 +56,10 @@ struct _LogTemplate
 {
   GAtomicCounter ref_cnt;
   gchar *name;
-  gchar *template;
+  gchar *template_str;
   GList *compiled_template;
   GlobalConfig *cfg;
-  guint escape:1, def_inline:1, trivial:1, literal:1;
-
+  guint top_level:1, escape:1, def_inline:1, trivial:1, literal:1;
 
   /* This value stores the type-hint the user _explicitly_ specified.  If
    * this is an automatic cast to string (in compat mode), this would be
@@ -78,8 +77,9 @@ struct _LogTemplate
 
 void log_template_set_escape(LogTemplate *self, gboolean enable);
 gboolean log_template_set_type_hint(LogTemplate *self, const gchar *hint, GError **error);
-gboolean log_template_compile(LogTemplate *self, const gchar *template, GError **error);
+gboolean log_template_compile(LogTemplate *self, const gchar *template_str, GError **error);
 gboolean log_template_compile_with_type_hint(LogTemplate *self, const gchar *template_and_typehint, GError **error);
+void log_template_forget_template_string(LogTemplate *self);
 void log_template_compile_literal_string(LogTemplate *self, const gchar *literal);
 gboolean log_template_is_literal_string(const LogTemplate *self);
 const gchar *log_template_get_literal_value(const LogTemplate *self, gssize *value_len);
@@ -91,6 +91,7 @@ const gchar *log_template_get_trivial_value_and_type(LogTemplate *self, LogMessa
 void log_template_set_name(LogTemplate *self, const gchar *name);
 
 LogTemplate *log_template_new(GlobalConfig *cfg, const gchar *name);
+LogTemplate *log_template_new_embedded(GlobalConfig *cfg);
 LogTemplate *log_template_ref(LogTemplate *s);
 void log_template_unref(LogTemplate *s);
 
@@ -100,12 +101,10 @@ void log_template_options_destroy(LogTemplateOptions *options);
 void log_template_options_defaults(LogTemplateOptions *options);
 void log_template_options_global_defaults(LogTemplateOptions *options);
 
-void log_template_global_init(void);
-void log_template_global_deinit(void);
-
 gboolean log_template_on_error_parse(const gchar *on_error, gint *out);
 void log_template_options_set_on_error(LogTemplateOptions *options, gint on_error);
 
-EVTTAG *evt_tag_template(const gchar *name, LogTemplate *template, LogMessage *msg, LogTemplateEvalOptions *options);
+EVTTAG *evt_tag_template(const gchar *name, LogTemplate *template_obj, LogMessage *msg,
+                         LogTemplateEvalOptions *options);
 
 #endif

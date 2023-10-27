@@ -143,6 +143,8 @@ stats_cluster_key_clone(StatsClusterKey *dst, const StatsClusterKey *src)
   dst->labels = stats_cluster_key_labels_clone(src->labels, src->labels_len);
   dst->labels_len = src->labels_len;
 
+  dst->formatting = src->formatting;
+
   dst->legacy.id = g_strdup(src->legacy.id ? : "");
   dst->legacy.component = src->legacy.component;
   dst->legacy.instance = g_strdup(src->legacy.instance ? : "");
@@ -210,6 +212,13 @@ stats_cluster_key_cloned_free(StatsClusterKey *self)
 
   if (self->counter_group_init.cloned_free)
     self->counter_group_init.cloned_free(&self->counter_group_init);
+}
+
+void
+stats_cluster_key_free(StatsClusterKey *self)
+{
+  stats_cluster_key_cloned_free(self);
+  g_free(self);
 }
 
 void

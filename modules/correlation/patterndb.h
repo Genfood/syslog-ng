@@ -21,8 +21,8 @@
  *
  */
 
-#ifndef PATTERNDB_H_INCLUDED
-#define PATTERNDB_H_INCLUDED
+#ifndef CORRELATION_PATTERNDB_H_INCLUDED
+#define CORRELATION_PATTERNDB_H_INCLUDED
 
 #include "syslog-ng.h"
 #include "pdb-ruleset.h"
@@ -30,7 +30,7 @@
 
 typedef struct _PatternDB PatternDB;
 
-typedef void (*PatternDBEmitFunc)(LogMessage *msg, gboolean synthetic, gpointer user_data);
+typedef void (*PatternDBEmitFunc)(LogMessage *msg, gpointer user_data);
 void pattern_db_set_emit_func(PatternDB *self, PatternDBEmitFunc emit_func, gpointer emit_data);
 void pattern_db_set_program_template(PatternDB *self, LogTemplate *program_template);
 

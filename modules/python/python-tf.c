@@ -99,7 +99,7 @@ static gboolean
 _py_convert_return_value_to_result(PythonTfState *state, const gchar *function_name, PyObject *ret, GString *result,
                                    LogMessageValueType *type)
 {
-  if (!cfg_is_typing_feature_enabled(state->cfg) && !is_py_obj_bytes_or_string_type(ret))
+  if (cfg_is_config_version_older(state->cfg, VERSION_VALUE_4_0) && !is_py_obj_bytes_or_string_type(ret))
     {
       msg_error("$(python): The current config version does not support returning non-string values from Python "
                 "functions. Please return str or bytes values from your Python function, use an explicit syslog-ng "
@@ -110,7 +110,9 @@ _py_convert_return_value_to_result(PythonTfState *state, const gchar *function_n
       return FALSE;
     }
 
-  if (!py_obj_to_log_msg_value(ret, result, type))
+  ScratchBuffersMarker marker;
+  GString *value = scratch_buffers_alloc_and_mark(&marker);
+  if (!py_obj_to_log_msg_value(ret, value, type))
     {
       gchar buf[256];
 
@@ -119,9 +121,13 @@ _py_convert_return_value_to_result(PythonTfState *state, const gchar *function_n
                 evt_tag_str("exception", _py_format_exception_text(buf, sizeof(buf))));
       _py_finish_exception_handling();
 
+      scratch_buffers_reclaim_marked(marker);
       Py_DECREF(ret);
       return FALSE;
     }
+
+  g_string_append(result, value->str);
+  scratch_buffers_reclaim_marked(marker);
 
   Py_DECREF(ret);
   return TRUE;

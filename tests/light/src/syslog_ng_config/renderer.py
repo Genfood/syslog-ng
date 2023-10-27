@@ -20,7 +20,10 @@
 # COPYING for details.
 #
 #############################################################################
+from src.syslog_ng_config import stringify
 from src.syslog_ng_config.statements.filters.filter import Filter
+from src.syslog_ng_config.statements.template.template import Template
+from src.syslog_ng_config.statements.template.template import TemplateFunction
 
 
 def render_version(version):
@@ -58,6 +61,36 @@ def render_options(name, options):
     config_snippet += render_driver_options(options)
     config_snippet += "        )\n"
 
+    return config_snippet
+
+
+def render_template_statement(template):
+    if not template.use_simple_statement:
+        config_snippet = "template {} {{\n".format(template.name)
+        config_snippet += "        template({});\n".format(stringify(template.template))
+        if template.template_escape is not None:
+            config_snippet += "        template-escape({});\n".format(template.template_escape)
+        config_snippet += "};\n"
+    else:
+        config_snippet = "template {} {};\n".format(template.name, stringify(template.template))
+    return config_snippet
+
+
+def render_template_function(template):
+    return "template-function {} {};\n".format(template.name, stringify(template.template))
+
+
+def render_template(template):
+    if isinstance(template, Template):
+        return render_template_statement(template)
+    elif isinstance(template, TemplateFunction):
+        return render_template_function(template)
+
+
+def render_templates(templates):
+    config_snippet = ""
+    for template in templates:
+        config_snippet += render_template(template)
     return config_snippet
 
 
@@ -126,21 +159,26 @@ def render_statement_groups(statement_groups):
     return config_snippet
 
 
-def render_logpath_groups(logpath_groups):
-    config_snippet = ""
+def _indent(string, depth):
+    return depth * "    " + string
+
+
+def render_logpath_groups(logpath_groups, depth=0):
+    config_snippet = "\n"
 
     for logpath_group in logpath_groups:
-        config_snippet += "\nlog {\n"
+        if logpath_group.name:
+            config_snippet += _indent("log " + logpath_group.name + " {\n", depth)
+        else:
+            config_snippet += _indent("log {\n", depth)
         for statement_group in logpath_group.logpath:
             if statement_group.group_type == "log":
-                config_snippet += render_logpath_groups(logpath_groups=[statement_group])
+                config_snippet += render_logpath_groups(logpath_groups=[statement_group], depth=depth + 1)
             else:
-                config_snippet += "    {}({});\n".format(
-                    statement_group.group_type, statement_group.group_id,
-                )
+                config_snippet += _indent("{}({});\n".format(statement_group.group_type, statement_group.group_id), depth + 1)
         if logpath_group.flags:
-            config_snippet += "    flags({});\n".format("".join(logpath_group.flags))
-        config_snippet += "};\n"
+            config_snippet += _indent("flags({});\n".format("".join(logpath_group.flags)), depth + 1)
+        config_snippet += _indent("};\n", depth)
 
     return config_snippet
 
@@ -159,6 +197,7 @@ class ConfigRenderer(object):
         version = self.__syslog_ng_config["version"]
         includes = self.__syslog_ng_config["includes"]
         global_options = self.__syslog_ng_config["global_options"]
+        templates = self.__syslog_ng_config["templates"]
         statement_groups = self.__syslog_ng_config["statement_groups"]
         logpath_groups = self.__syslog_ng_config["logpath_groups"]
 
@@ -170,6 +209,8 @@ class ConfigRenderer(object):
             config += render_includes(includes)
         if global_options:
             config += render_global_options(global_options)
+        if templates:
+            config += render_templates(templates)
         if statement_groups:
             config += render_statement_groups(statement_groups)
         if logpath_groups:

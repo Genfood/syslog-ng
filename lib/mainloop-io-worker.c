@@ -47,27 +47,45 @@ _engage(MainLoopIOWorkerJob *self)
     self->engage(self->user_data);
 }
 
-/* NOTE: runs in the main thread */
-void
-main_loop_io_worker_job_submit(MainLoopIOWorkerJob *self, GIOCondition cond)
+gboolean
+main_loop_io_worker_job_submit(MainLoopIOWorkerJob *self, gpointer arg)
 {
+  main_loop_assert_main_thread();
+
   g_assert(self->working == FALSE);
   if (main_loop_workers_quit)
-    return;
+    return FALSE;
 
   _engage(self);
   main_loop_worker_job_start();
   self->working = TRUE;
-  self->cond = cond;
+  self->arg = arg;
   iv_work_pool_submit_work(&main_loop_io_workers, &self->work_item);
+  return TRUE;
 }
+
+#if SYSLOG_NG_HAVE_IV_WORK_POOL_SUBMIT_CONTINUATION
+void
+main_loop_io_worker_job_submit_continuation(MainLoopIOWorkerJob *self, gpointer arg)
+{
+  main_loop_assert_worker_thread();
+  g_assert(self->working == FALSE);
+
+  _engage(self);
+  main_loop_worker_job_start();
+  self->working = TRUE;
+  self->arg = arg;
+
+  iv_work_pool_submit_continuation(&main_loop_io_workers, &self->work_item);
+}
+#endif
 
 /* NOTE: runs in the actual worker thread spawned by the
  * main_loop_io_workers thread pool */
 static void
 _work(MainLoopIOWorkerJob *self)
 {
-  self->work(self->user_data, self->cond);
+  self->work(self->user_data, self->arg);
   main_loop_worker_invoke_batch_callbacks();
   main_loop_worker_run_gc();
 }
@@ -77,7 +95,8 @@ static void
 _complete(MainLoopIOWorkerJob *self)
 {
   self->working = FALSE;
-  self->completion(self->user_data);
+  if (self->completion)
+    self->completion(self->user_data, self->arg);
   main_loop_worker_job_complete();
   _release(self);
 }

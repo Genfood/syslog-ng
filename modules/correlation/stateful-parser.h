@@ -21,8 +21,8 @@
  *
  */
 
-#ifndef STATEFUL_PARSER_H_INCLUDED
-#define STATEFUL_PARSER_H_INCLUDED 1
+#ifndef CORRELATION_STATEFUL_PARSER_H_INCLUDED
+#define CORRELATION_STATEFUL_PARSER_H_INCLUDED 1
 
 #include "parser/parser-expr.h"
 
@@ -52,10 +52,34 @@ stateful_parser_deinit_method(LogPipe *s)
 }
 
 void stateful_parser_set_inject_mode(StatefulParser *self, LogDBParserInjectMode inject_mode);
+void stateful_parser_clone_settings(StatefulParser *self, StatefulParser *cloned);
 void stateful_parser_emit_synthetic(StatefulParser *self, LogMessage *msg);
+void stateful_parser_emit_synthetic_list(StatefulParser *self, LogMessage **values, gsize len);
 void stateful_parser_init_instance(StatefulParser *self, GlobalConfig *cfg);
 void stateful_parser_free_method(LogPipe *s);
 
 int stateful_parser_lookup_inject_mode(const gchar *inject_mode);
+
+#define EXPECTED_NUMBER_OF_MESSAGES_EMITTED 32
+
+/* This structure is to be held on the stack to accumulate messages to be
+ * emitted after a single correlation cycle.  We store these messages
+ * temporarily in this struct (instead of sending them along on the log
+ * pipeline), so we can avoid posting them while our locks are held.
+ *
+ * Sending messages along the pipeline with locks held can cause deadlocks,
+ * see the commit a00164c04d for more information.
+ */
+typedef struct _StatefulParserEmittedMessages
+{
+  LogMessage *emitted_messages[EXPECTED_NUMBER_OF_MESSAGES_EMITTED];
+  GPtrArray *emitted_messages_overflow;
+  gint num_emitted_messages;
+} StatefulParserEmittedMessages;
+
+#define STATEFUL_PARSER_EMITTED_MESSAGES_INIT {0}
+
+void stateful_parser_emitted_messages_add(StatefulParserEmittedMessages *self, LogMessage *msg);
+void stateful_parser_emitted_messages_flush(StatefulParserEmittedMessages *self, StatefulParser *parser);
 
 #endif

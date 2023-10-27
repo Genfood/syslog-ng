@@ -28,11 +28,12 @@
 #include "dnscache.h"
 #include "alarms.h"
 #include "stats/stats-registry.h"
+#include "healthcheck/healthcheck-stats.h"
 #include "logmsg/logmsg.h"
 #include "logsource.h"
 #include "logwriter.h"
 #include "afinter.h"
-#include "template/templates.h"
+#include "template/globals.h"
 #include "hostname.h"
 #include "mainloop-call.h"
 #include "service-management.h"
@@ -46,6 +47,7 @@
 #include "timeutils/timeutils.h"
 #include "msg-stats.h"
 #include "timeutils/cache.h"
+#include "multi-line/multi-line-factory.h"
 
 #include <iv.h>
 #include <iv_work.h>
@@ -224,6 +226,7 @@ app_startup(void)
   alarm_init();
   main_loop_thread_resource_init();
   stats_init();
+  healthcheck_stats_global_init();
   tzset();
   log_msg_global_init();
   log_tags_global_init();
@@ -238,6 +241,7 @@ app_startup(void)
   scratch_buffers_global_init();
   msg_stats_init();
   timeutils_global_init();
+  multi_line_global_init();
 }
 
 void
@@ -264,6 +268,8 @@ app_shutdown(void)
 {
   msg_stats_deinit();
   run_application_hook(AH_SHUTDOWN);
+
+  multi_line_global_deinit();
   main_loop_thread_resource_deinit();
   secret_storage_deinit();
   scratch_buffers_allocator_deinit();

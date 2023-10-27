@@ -48,10 +48,11 @@ LIBRDKAFKA_MIN_VERSION="1.1.0"
 IVYKIS_MIN_VERSION="0.36.1"
 IVYKIS_UPDATED_VERSION="0.39"
 JSON_C_MIN_VERSION="0.9"
-PCRE_MIN_VERSION="6.1"
+PCRE2_MIN_VERSION="10.0"
 LMC_MIN_VERSION="1.0.0"
 LRMQ_MIN_VERSION="0.0.1"
 LRC_MIN_VERSION="1.6.0"
+LIBBPF_MIN_VERSION="1.0.1"
 JOURNALD_MIN_VERSION="195"
 LIBSYSTEMD_MIN_VERSION="209"
 LIBSYSTEMD_WITH_JOURNAL_NAMESPACES_MIN_VERSION="245"
@@ -59,6 +60,8 @@ JAVA_MIN_VERSION="1.8"
 GRADLE_MIN_VERSION="3.4"
 HIREDIS_MIN_VERSION="0.11.0"
 CRITERION_MIN_VERSION="2.2.1"
+PROTOBUF_MIN_VERSION="3.12.0"
+GRPCPP_MIN_VERSION="1.16.1"
 
 dnl ***************************************************************************
 dnl Initial setup
@@ -132,6 +135,7 @@ fi
 pidfiledir='${localstatedir}'
 moduledir='${exec_prefix}/lib/syslog-ng'
 loggenplugindir='${moduledir}/loggen'
+python_venvdir='${localstatedir}/python-venv'
 toolsdir='${datadir}/syslog-ng/tools'
 xsddir='${datadir}/syslog-ng/xsd'
 
@@ -166,6 +170,10 @@ AC_ARG_WITH(loggen-plugin-dir,
    [  --with-loggen-plugin-dir=path   Use path as the directory to install loggen plugins into],
    loggenplugindir=$with_loggen_plugin_dir)
 
+AC_ARG_WITH(python-venv-dir,
+   [  --with-python-venv-dir=path   Use path as the directory to install the Python venv into],
+   python_venvdir=$with_python_venv_dir)
+
 AC_ARG_WITH(module-path,
    [  --with-module-path=path   Use path as the list of ':' separated directories looked up when searching for modules],
    module_path=$with_module_path)
@@ -190,6 +198,9 @@ AC_ARG_ENABLE(forced_server_mode,
 
 AC_ARG_ENABLE(debug,
               [  --enable-debug      Enable debugging code.],, enable_debug="no")
+
+AC_ARG_ENABLE(example-modules,
+              [  --enable-example-modules Enable example modules.],, enable_example_modules="yes")
 
 AC_ARG_ENABLE(force_gnu99,
               [  --enable-force-gnu99      Enforce C99 with gnu extensions.],, force_gnu99="no")
@@ -216,6 +227,9 @@ AC_ARG_ENABLE(dynamic-linking,
 
 AC_ARG_ENABLE(mixed-linking,
               [  --enable-mixed-linking          Link 3rd party libraries statically, system libraries dynamically],,enable_mixed_linking="auto")
+
+AC_ARG_ENABLE(force-classic-linking,
+              [  --enable-force-classic-linking  Link using ld-classic (default: no)],, enable_force_classic_linking="no")
 
 AC_ARG_ENABLE(ipv6,
               [  --enable-ipv6           Enable support for IPv6.],,enable_ipv6="auto")
@@ -246,6 +260,10 @@ AC_ARG_ENABLE(pacct,
 AC_ARG_ENABLE(linux-caps,
               [  --enable-linux-caps     Enable support for managing Linux capabilities (default: auto)]
               ,,enable_linux_caps="auto")
+
+AC_ARG_ENABLE(ebpf,
+              [  --enable-ebpf           Enable support for loading of eBPF programs (default: no)]
+              ,,enable_ebpf="no")
 
 AC_ARG_ENABLE(gcov,
               [  --enable-gcov           Enable coverage profiling (default: no)]
@@ -293,6 +311,25 @@ AC_ARG_WITH(libpaho-mqtt,
              AC_HELP_STRING([--with-libpaho-mqtt=DIR],
                             [use libpaho-mqtt library from (prefix) directory DIR]),,)
 
+AC_ARG_ENABLE(grpc,
+              [  --enable-grpc           Enable GRPC based driver support (OpenTelemetry) (default: auto)]
+              ,,enable_grpc="auto")
+
+AC_ARG_WITH(protoc,
+            AC_HELP_STRING([--with-protoc=PATH],
+                           [use protoc binary at PATH]),,)
+
+AC_ARG_WITH(protoc_gen_grpc_cpp_plugin,
+            AC_HELP_STRING([--with-protoc-gen-grpc-cpp-plugin=PATH],
+                           [use protoc-gen-grpc-cpp plugin at PATH]),,)
+
+AC_ARG_ENABLE(cloud_auth,
+              [  --enable-cloud-auth     Enable cloud authentication methods (GCP) (default: auto)]
+              ,,enable_cloud_auth="auto")
+
+AC_ARG_ENABLE(cpp,
+              [  --enable-cpp           Enable C++ support (default: auto)]
+              ,,enable_cpp="auto")
 
 AC_ARG_ENABLE(http,
               [  --disable-http          Disable http support (default: auto)]
@@ -340,7 +377,7 @@ AC_ARG_ENABLE(python,
               ,,enable_python="auto")
 
 AC_ARG_ENABLE(python-modules,
-              [  --disable-python-modules  Disable Python based syslog-ng modules]
+              [  --disable-python-modules  Disable Python based syslog-ng addons while installing the core Python modules]
               ,,enable_python_modules="auto")
 
 AC_ARG_WITH(python,
@@ -384,7 +421,7 @@ if test "x$enable_all_modules" != "xauto"; then
 
    MODULES="spoof_source sun_streams sql pacct mongodb json amqp stomp \
             redis systemd geoip2 riemann ipv6 smtp native python python_modules java java_modules \
-            http afsnmp kafka mqtt"
+            http afsnmp kafka mqtt grpc"
    for mod in ${MODULES}; do
        modstate=$(eval echo \$enable_${mod})
        if test "x$modstate" = "xauto"; then
@@ -413,6 +450,7 @@ patheval()
 
 dnl ***************************************************************************
 dnl Checks for programs.
+
 AC_PROG_CC
 AC_PROG_CC_C99
 AM_PROG_CC_C_O
@@ -435,6 +473,40 @@ if test "${PYTHON}" = ":"; then
 fi
 
 AM_CONDITIONAL([HAVE_PYTHON_INTERPRETER], [test "$PYTHON" != :])
+
+dnl ***************************************************************************
+dnl C++
+
+# Ok, here is the deal
+# clang cannot compile the current source, it has nultiple issues
+# replace it till not fixed them
+if test "x$CXX" = "xclang"; then
+        AC_MSG_ERROR(["clang cannot compile syslog-ng C++ sources, try using gcc instead (export CXX=gcc) for C++ compilation (NOTE: on macOS you need Homebrew gcc not the Apple one)"])
+elif test "x$CC" = "xclang"; then
+        CPP_COMPILER="gcc"
+        AC_MSG_WARN(["clang cannot compile syslog-ng C++ sources, switched to $CPP_COMPILER for C++ compilation (NOTE: on macOS you need Homebrew gcc not the Apple one)"])
+else
+        CPP_COMPILER="$CXX $CC"
+fi
+# This one is useful for checking the available compilers
+# AC_MSG_RESULT(gcc = $(which gcc) - g++ = $(which g++) - clang = $(which clang))
+# AC_MSG_RESULT(Paths: gcc = $(ls -Al $(which gcc)) - g++ = $(ls -Al $(which g++)) - clang = $(ls -Al $(which clang)))
+# AC_MSG_RESULT($(gcc -v))
+# AC_MSG_RESULT($(g++ -v))
+# AC_MSG_RESULT($(clang -v))
+# AC_MSG_RESULT(C++ compilers to be used $CPP_COMPILER)
+AC_PROG_CXX([$CPP_COMPILER])
+
+if test "x$enable_cpp" = "xyes"; then
+        AX_CXX_COMPILE_STDCXX(11,, mandatory)
+elif test "x$enable_cpp" = "xauto"; then
+        AX_CXX_COMPILE_STDCXX(11,, optional)
+        if test "x$HAVE_CXX11" = "x1"; then
+                enable_cpp=yes
+        else
+                enable_cpp=no
+        fi
+fi
 
 dnl ***************************************************************************
 dnl Validate yacc
@@ -526,16 +598,21 @@ if test "x$ac_compiler_gnu" = "xyes"; then
 	# we don't want to use with our debugging builds.
 
 	CFLAGS_ADD=""
+        CXXFLAGS_ADD=""
         if test "x$enable_debug" = "xyes"; then
                 CFLAGS_ADD="${CFLAGS_ADD} -g"
+                CXXFLAGS_ADD="${CXXFLAGS_ADD} -g"
         else
                 CFLAGS_ADD="${CFLAGS_ADD} -O2 -g"
+                CXXFLAGS_ADD="${CXXFLAGS_ADD} -O2 -g"
         fi
         if test "x$enable_gprof" = "xyes"; then
                 CFLAGS_ADD="${CFLAGS_ADD} -pg"
+                CXXFLAGS_ADD="${CXXFLAGS_ADD} -pg"
         fi
         if test "x$enable_gcov" = "xyes"; then
                 CFLAGS_ADD="${CFLAGS_ADD} -fprofile-arcs -ftest-coverage"
+                CXXFLAGS_ADD="${CXXFLAGS_ADD} -fprofile-arcs -ftest-coverage"
         fi
 else
         enable_extra_warnings="no"
@@ -558,6 +635,7 @@ AX_CFLAGS_GCC_OPTION(-Winitializer-overrides,
 
 dnl User supplied CFLAGS come last
 CFLAGS="${CFLAGS_ADD} ${ac_cv_env_CFLAGS_value}"
+CXXFLAGS="${CXXFLAGS_ADD} ${ac_cv_env_CXXFLAGS_value}"
 
 AC_SYS_LARGEFILE
 
@@ -589,6 +667,12 @@ case "$ostype" in
 	Darwin)
 		MODULE_LDFLAGS="-avoid-version -dylib"
 		LDFLAGS="$LDFLAGS -Wl,-flat_namespace"
+                # NOTE: This is now seems to be an Apple/Xcode "only" issue, but probably much better a clang one, so later we might want to add this globally
+                # XCode15 new linker has some issues (e.g. https://developer.apple.com/forums/thread/737707)
+                # switch back to classic linking till not fixed (https://developer.apple.com/documentation/xcode-release-notes/xcode-15-release-notes#Linking)
+                if test "x$enable_force_classic_linking" = "xyes"; then
+                        LDFLAGS="$LDFLAGS -Wl,-ld_classic"
+                fi
 		CFLAGS="$CFLAGS -D__APPLE_USE_RFC_3542"
     ;;
 	OSF1)
@@ -684,6 +768,7 @@ AC_CHECK_HEADERS(strings.h	\
 	door.h			\
 	sys/capability.h	\
 	sys/prctl.h		\
+	linux/sock_diag.h	\
 	utmp.h			\
 	utmpx.h)
 AC_CHECK_HEADERS(tcpd.h)
@@ -786,6 +871,11 @@ if test "x$blb_cv_c_modern_utmp" = "xyes"; then
 	AC_DEFINE(HAVE_MODERN_UTMP, 1, [have modern utmp/utmpx format])
 fi
 
+AC_CHECK_DECLS(SO_MEMINFO,
+               AC_DEFINE(ENABLE_AFSOCKET_MEMINFO_METRICS, 1, [enable SO_MEMINFO based metrics in afsocket]),
+               AC_DEFINE(ENABLE_AFSOCKET_MEMINFO_METRICS, 0, [enable SO_MEMINFO based metrics in afsocket]),
+               [[#include <sys/socket.h>]])
+
 dnl ***************************************************************************
 dnl Checks for libraries
 AC_CHECK_LIB(m, round, BASE_LIBS="$BASE_LIBS -lm")
@@ -815,6 +905,7 @@ AC_CHECK_FUNCS(strdup		\
 	getprotobynumber_r	\
 	gmtime_r		\
 	strnlen			\
+	getline			\
 	strtok_r)
 old_LIBS=$LIBS
 LIBS=$BASE_LIBS
@@ -1019,9 +1110,10 @@ if test "x$linking_mode" = "xmixed"; then
         LIBS="$old_LIBS"
 fi
 
-PKG_CHECK_MODULES(PCRE, libpcre >= $PCRE_MIN_VERSION,, PCRE_LIBS="")
-if test -z "$PCRE_LIBS"; then
-	AC_MSG_ERROR(Cannot find pcre version >= $PCRE_MIN_VERSION it is a hard dependency from syslog-ng 3.6 onwards)
+PKG_CHECK_MODULES(PCRE2, libpcre2-8 >= $PCRE2_MIN_VERSION,, PCRE2_LIBS="")
+
+if test -z "$PCRE2_LIBS"; then
+	AC_MSG_ERROR(Cannot find pcre2 version >= $PCRE2_MIN_VERSION which is a hard dependency from syslog-ng 3.6 onwards)
 fi
 
 dnl ***************************************************************************
@@ -1060,9 +1152,12 @@ AC_CHECK_DECLS([EVP_MD_CTX_reset], [], [], [[#include <openssl/evp.h>]])
 AC_CHECK_DECLS([ASN1_STRING_get0_data], [], [], [[#include <openssl/asn1.h>]])
 AC_CHECK_DECLS([DH_set0_pqg], [], [], [[#include <openssl/dh.h>]])
 AC_CHECK_DECLS([BN_get_rfc3526_prime_2048], [], [], [[#include <openssl/bn.h>]])
+AC_CHECK_DECLS([SSL_CONF_CTX_new],[], [], [[#include <openssl/ssl.h>]])
 AC_CHECK_DECLS([SSL_CTX_set_num_tickets],[], [], [[#include <openssl/ssl.h>]])
 AC_CHECK_DECLS([SSL_CTX_set1_sigalgs_list],[], [], [[#include <openssl/ssl.h>]])
 AC_CHECK_DECLS([SSL_CTX_set1_client_sigalgs_list],[], [], [[#include <openssl/ssl.h>]])
+AC_CHECK_DECLS([SSL_add_file_cert_subjects_to_stack],[], [], [[#include <openssl/ssl.h>]])
+AC_CHECK_DECLS([SSL_add_dir_cert_subjects_to_stack],[], [], [[#include <openssl/ssl.h>]])
 
 CPPFLAGS="$CPPFLAGS_SAVE"
 
@@ -1206,6 +1301,8 @@ if test "x$with_ivykis" = "xinternal"; then
 
 		# LIBS to use when libtool is not applicable (when linking the main syslog-ng executable in mixed linking mode)
 		IVYKIS_NO_LIBTOOL_LIBS="-Wl,${WHOLE_ARCHIVE_OPT} -L\$(top_builddir)/lib/ivykis/src/.libs -livykis -Wl,${NO_WHOLE_ARCHIVE_OPT}"
+
+		AC_DEFINE(HAVE_IV_WORK_POOL_SUBMIT_CONTINUATION, 1)
 	else
 		AC_MSG_ERROR([Internal ivykis sources not found in lib/ivykis. This is a hard dependency, unable to build syslog-ng without them.])
 	fi
@@ -1219,7 +1316,15 @@ else
 	# we're linking dynamically)
 
 	IVYKIS_NO_LIBTOOL_LIBS="$IVYKIS_LIBS"
+
+	dnl check if iv_work_pool_submit_continuation is available in the system ivykis
+	old_LIBS=$LIBS
+	LIBS="$LIBS $IVYKIS_LIBS"
+	AC_CHECK_FUNCS(iv_work_pool_submit_continuation, [], [AC_DEFINE(HAVE_IV_WORK_POOL_SUBMIT_CONTINUATION, 0)])
+	LIBS=$old_LIBS
 fi
+
+
 
 dnl ***************************************************************************
 dnl json headers/libraries
@@ -1300,7 +1405,6 @@ if test "x$enable_smtp" != "xno" && test "x$with_libesmtp" != "xno"; then
 	enable_smtp=$libesmtp
 fi
 
-
 dnl ***************************************************************************
 dnl libmqtt headers/libraries
 dnl ***************************************************************************
@@ -1345,6 +1449,113 @@ if test "x$enable_mqtt" = "xyes" || test "x$enable_mqtt" = "xauto"; then
 fi
 
 dnl ***************************************************************************
+dnl GRPC headers/libraries
+dnl ***************************************************************************
+
+# C++
+if ! test "x$enable_grpc" = "xno"; then
+    if test "x$enable_cpp" = "xno"; then
+        if test "x$enable_grpc" = "xyes"; then
+            AC_MSG_ERROR(C++ support is mandatory when the GRPC modules are enabled.)
+        else
+            enable_grpc=no
+        fi
+    fi
+fi
+
+# ProtoBuf libraries
+if ! test "x$enable_grpc" = "xno"; then
+    PKG_CHECK_MODULES(PROTOBUF, protobuf >= $PROTOBUF_MIN_VERSION, protobuf_found="yes", protobuf_found="no")
+    if test "$protobuf_found" = "no"; then
+        if test "x$enable_grpc" = "xyes"; then
+            AC_MSG_ERROR(ProtoBuf libraries not found.)
+        else
+            enable_grpc=no
+        fi
+    fi
+fi
+
+# ProtoC compiler
+if ! test "x$enable_grpc" = "xno"; then
+    if ! test "x$with_protoc" = "x"; then
+        PROTOC=$with_protoc
+    else
+        AC_PATH_PROG([PROTOC], [protoc])
+        if test "x$PROTOC" = "x"; then
+            if test "x$enable_grpc" = "xyes"; then
+                AC_MSG_ERROR(ProtoBuf compiler "protoc" not found.)
+            else
+                enable_grpc=no
+            fi
+        else
+            PROTOC_VERSION=`${PROTOC} --version | cut -f2 -d' '`
+            PROTOC_VERSION_MAJOR=`echo $PROTOC_VERSION | cut -f1 -d'.'`
+            PROTOC_VERSION_MINOR=`echo $PROTOC_VERSION | cut -f2 -d'.'`
+            PROTOC_VERSION_PATCH=`echo $PROTOC_VERSION | cut -f3 -d'.'`
+        fi
+    fi
+fi
+
+# GRPC CPP plugin for ProtoC compiler
+if ! test "x$enable_grpc" = "xno"; then
+    if ! test "x$with_protoc_gen_grpc_cpp_plugin" = "x"; then
+        PROTOC_GEN_GRPC_CPP_PLUGIN=$with_protoc_gen_grpc_cpp_plugin
+    else
+        AC_PATH_PROG([PROTOC_GEN_GRPC_CPP_PLUGIN], [grpc_cpp_plugin])
+        if test "x$PROTOC_GEN_GRPC_CPP_PLUGIN" = "x"; then
+            if test "x$enable_grpc" = "xyes"; then
+                AC_MSG_ERROR(GRPC CPP plugin for ProtoC compiler not found.)
+            else
+                enable_grpc=no
+            fi
+        fi
+    fi
+
+    if ! test "x$PROTOC_GEN_GRPC_CPP_PLUGIN" = "x"; then
+        PROTOC_GEN_GRPC_CPP_PLUGIN_FLAGS='--plugin=protoc-gen-grpc-cpp="${PROTOC_GEN_GRPC_CPP_PLUGIN}"'
+
+        if test ${PROTOC_VERSION_MAJOR} -eq 3 -a ${PROTOC_VERSION_MINOR} -lt 15; then
+            PROTOC_GEN_GRPC_CPP_PLUGIN_FLAGS="${PROTOC_GEN_GRPC_CPP_PLUGIN_FLAGS} --experimental_allow_proto3_optional"
+        fi
+
+        AC_SUBST(PROTOC_GEN_GRPC_CPP_PLUGIN_FLAGS)
+    fi
+fi
+
+# GRPC++ libraries
+if ! test "x$enable_grpc" = "xno"; then
+    PKG_CHECK_MODULES(GRPCPP, grpc++ >= $GRPCPP_MIN_VERSION, grpcpp_found="yes", grpcpp_found="no")
+    if test "$grpcpp_found" = "no"; then
+        if test "x$enable_grpc" = "xyes"; then
+            AC_MSG_ERROR(GRPC++ libraries not found.)
+        else
+            enable_grpc=no
+        fi
+    fi
+fi
+
+if ! test "x$enable_grpc" = "xno"; then
+    enable_grpc=yes
+fi
+
+dnl ***************************************************************************
+dnl Cloud Auth
+dnl ***************************************************************************
+if ! test "x$enable_cloud_auth" = "xno"; then
+    if test "x$enable_cpp" = "xno"; then
+        if test "x$enable_cloud_auth" = "xyes"; then
+            AC_MSG_ERROR(C++ support is mandatory when the cloud-auth module is enabled.)
+        else
+            enable_cloud_auth=no
+        fi
+    fi
+fi
+
+if ! test "x$enable_cloud_auth" = "xno"; then
+    enable_cloud_auth=yes
+fi
+
+dnl ***************************************************************************
 dnl libcurl headers/libraries
 dnl ***************************************************************************
 if test "x$enable_http" != "xno" && test "x$with_libcurl" != "xno"; then
@@ -1381,6 +1592,7 @@ if test "x$enable_http" != "xno" && test "x$with_libcurl" != "xno"; then
                           [], [],
                           [[#include <curl/curl.h>]])
            CFLAGS=$old_CFLAGS
+		   AC_CHECK_HEADER(zlib.h, AC_DEFINE(HAVE_ZLIB, , [Define if zlib is available]), AC_MSG_WARN([ZLIB not found.]))
         fi
 fi
 
@@ -1760,6 +1972,26 @@ if test "x$enable_systemd" = "xyes"; then
         fi
 fi
 
+
+if test "x$enable_ebpf" = "xyes"; then
+	PKG_CHECK_MODULES(LIBBPF, libbpf >= $LIBBPF_MIN_VERSION)
+
+	# we are using a distinct C compiler for compiling BPF code and
+	# pkg-config removes builtin paths from its output.  Reference it
+	# directly.
+
+	LIBBPF_INCLUDE=`$PKG_CONFIG --variable includedir libbpf`
+        AC_PATH_PROG(BPFTOOL, bpftool)
+        AC_PATH_PROG(BPF_CC, clang)
+
+	if test "$BPFTOOL" = "" -o "$BPF_CC" = ""; then
+		AC_MSG_ERROR([eBPF toolchain is required to build with eBPF (bpftool and clang)])
+	fi
+
+        AC_SUBST(BPFTOOL)
+        AC_SUBST(BPF_CC)
+fi
+
 dnl ***************************************************************************
 dnl check if we have timezone variable in <time.h>
 dnl ***************************************************************************
@@ -1796,9 +2028,8 @@ fi
 
 python_moduledir="$moduledir"/python
 python_sysconf_moduledir="${sysconfdir}/python"
-python_venvdir="${localstatedir}/python-venv"
 
-CPPFLAGS="$CPPFLAGS $GLIB_CFLAGS $EVTLOG_CFLAGS $PCRE_CFLAGS $OPENSSL_CFLAGS $LIBNET_CFLAGS $LIBDBI_CFLAGS $IVYKIS_CFLAGS $LIBCAP_CFLAGS -D_GNU_SOURCE -D_DEFAULT_SOURCE -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64"
+CPPFLAGS="$CPPFLAGS $GLIB_CFLAGS $EVTLOG_CFLAGS $PCRE2_CFLAGS $OPENSSL_CFLAGS $LIBNET_CFLAGS $LIBDBI_CFLAGS $IVYKIS_CFLAGS $LIBCAP_CFLAGS -D_GNU_SOURCE -D_DEFAULT_SOURCE -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64"
 
 ########################################################
 ## NOTES: on how syslog-ng is linked
@@ -1846,7 +2077,7 @@ fi
 MODULE_DEPS_LIBS="\$(top_builddir)/lib/libsyslog-ng.la"
 
 if test "x$linking_mode" = "xdynamic"; then
-	SYSLOGNG_DEPS_LIBS="$LIBS $BASE_LIBS $GLIB_LIBS $EVTLOG_LIBS $SECRETSTORAGE_LIBS $RESOLV_LIBS $LIBCAP_LIBS $PCRE_LIBS $REGEX_LIBS $DL_LIBS"
+	SYSLOGNG_DEPS_LIBS="$LIBS $BASE_LIBS $GLIB_LIBS $EVTLOG_LIBS $SECRETSTORAGE_LIBS $RESOLV_LIBS $LIBCAP_LIBS $PCRE2_LIBS $REGEX_LIBS $DL_LIBS"
 
 	if test "x$with_ivykis" = "xinternal"; then
 		# when using the internal ivykis, we're linking it statically into libsyslog-ng.so
@@ -1865,8 +2096,8 @@ if test "x$linking_mode" = "xdynamic"; then
 	# syslog-ng binary is linked with the default link command (e.g. libtool)
 	SYSLOGNG_LINK='$(LINK)'
 else
-	SYSLOGNG_DEPS_LIBS="$LIBS $BASE_LIBS $RESOLV_LIBS $EVTLOG_NO_LIBTOOL_LIBS $SECRETSTORAGE_NO_LIBTOOL_LIBS $LD_START_STATIC -Wl,${WHOLE_ARCHIVE_OPT} $GLIB_LIBS $PCRE_LIBS $REGEX_LIBS  -Wl,${NO_WHOLE_ARCHIVE_OPT} $IVYKIS_NO_LIBTOOL_LIBS $LD_END_STATIC $LIBCAP_LIBS $DL_LIBS"
-	TOOL_DEPS_LIBS="$LIBS $BASE_LIBS $GLIB_LIBS $EVTLOG_LIBS $SECRETSTORAGE_LIBS $RESOLV_LIBS $LIBCAP_LIBS $PCRE_LIBS $REGEX_LIBS $IVYKIS_LIBS $DL_LIBS"
+	SYSLOGNG_DEPS_LIBS="$LIBS $BASE_LIBS $RESOLV_LIBS $EVTLOG_NO_LIBTOOL_LIBS $SECRETSTORAGE_NO_LIBTOOL_LIBS $LD_START_STATIC -Wl,${WHOLE_ARCHIVE_OPT} $GLIB_LIBS $PCRE2_LIBS $REGEX_LIBS  -Wl,${NO_WHOLE_ARCHIVE_OPT} $IVYKIS_NO_LIBTOOL_LIBS $LD_END_STATIC $LIBCAP_LIBS $DL_LIBS"
+	TOOL_DEPS_LIBS="$LIBS $BASE_LIBS $GLIB_LIBS $EVTLOG_LIBS $SECRETSTORAGE_LIBS $RESOLV_LIBS $LIBCAP_LIBS $PCRE2_LIBS $REGEX_LIBS $IVYKIS_LIBS $DL_LIBS"
 	CORE_DEPS_LIBS=""
 
 	# bypass libtool in case we want to do mixed linking because it
@@ -1912,6 +2143,7 @@ AC_DEFINE_UNQUOTED(PATH_LOCALSTATEDIR, "$localstatedir", [local state directory]
 AC_DEFINE_UNQUOTED(PATH_PIDFILEDIR, "$pidfiledir", [local state directory])
 AC_DEFINE_UNQUOTED(PATH_DATAROOTDIR, "$datarootdir", [data root directory])
 AC_DEFINE_UNQUOTED(PATH_DATADIR, "$datadir", [data directory])
+AC_DEFINE_UNQUOTED(PATH_PKGDATADIR, "$datadir/$PACKAGE", [pkgdata directory])
 AC_DEFINE_UNQUOTED(PATH_CONFIG_INCLUDEDIR, "$config_includedir", [include directory])
 AC_DEFINE_UNQUOTED(PATH_SCLDIR, "$scldir", [SCL directory])
 AC_DEFINE_UNQUOTED(PATH_XSDDIR, "$xsddir", [XSD directory])
@@ -1943,9 +2175,11 @@ AC_DEFINE_UNQUOTED(ENABLE_SPOOF_SOURCE, `enable_value $enable_spoof_source`, [En
 AC_DEFINE_UNQUOTED(ENABLE_IPV6, `enable_value $enable_ipv6`, [Enable IPv6 support])
 AC_DEFINE_UNQUOTED(ENABLE_TCP_WRAPPER, `enable_value $enable_tcp_wrapper`, [Enable TCP wrapper support])
 AC_DEFINE_UNQUOTED(ENABLE_LINUX_CAPS, `enable_value $enable_linux_caps`, [Enable Linux capability management support])
+AC_DEFINE_UNQUOTED(ENABLE_EBPF, `enable_value $enable_ebpf`, [Enable Linux eBPF support])
 AC_DEFINE_UNQUOTED(ENABLE_ENV_WRAPPER, `enable_value $enable_env_wrapper`, [Enable environment wrapper support])
 AC_DEFINE_UNQUOTED(ENABLE_SYSTEMD, `enable_value $enable_systemd`, [Enable systemd support])
 AC_DEFINE_UNQUOTED(ENABLE_KAFKA, `enable_value $enable_kafka`, [Enable kafka support])
+AC_DEFINE_UNQUOTED(ENABLE_CPP, `enable_value $enable_cpp`, [Enable C++ support])
 AC_DEFINE_UNQUOTED(SYSTEMD_JOURNAL_MODE, `journald_mode`, [Systemd-journal support mode])
 AC_DEFINE_UNQUOTED(HAVE_INOTIFY, `enable_value $ac_cv_func_inotify_init`, [Have inotify])
 AC_DEFINE_UNQUOTED(USE_CONST_IVYKIS_MOCK, `enable_value $IVYKIS_VERSION_UPDATED`, [ivykis version is greater than $IVYKIS_UPDATED_VERSION])
@@ -1956,10 +2190,14 @@ AM_CONDITIONAL(ENABLE_SYSTEMD_UNIT_INSTALL, [test "$systemdsystemunitdir" != ""]
 AM_CONDITIONAL(ENABLE_SQL, [test "$enable_sql" = "yes"])
 AM_CONDITIONAL(ENABLE_SUN_STREAMS, [test "$enable_sun_streams" = "yes"])
 AM_CONDITIONAL(ENABLE_OPENBSD_SYSTEM_SOURCE, [test "$enable_openbsd_system_source" = "yes"])
+AM_CONDITIONAL(ENABLE_EBPF, [test "$enable_ebpf" = "yes"])
 AM_CONDITIONAL(ENABLE_PACCT, [test "$enable_pacct" = "yes"])
 AM_CONDITIONAL(ENABLE_MONGODB, [test "$enable_mongodb" = "yes"])
 AM_CONDITIONAL(ENABLE_SMTP, [test "$enable_smtp" = "yes"])
 AM_CONDITIONAL(ENABLE_MQTT, [test "$enable_mqtt" = "yes"])
+AM_CONDITIONAL(ENABLE_CPP, [test "$enable_cpp" = "yes"])
+AM_CONDITIONAL(ENABLE_GRPC, [test "$enable_grpc" = "yes"])
+AM_CONDITIONAL(ENABLE_CLOUD_AUTH, [test "$enable_cloud_auth" = "yes"])
 AM_CONDITIONAL(ENABLE_HTTP, [test "$enable_http" = "yes"])
 AM_CONDITIONAL(ENABLE_AMQP, [test "$enable_amqp" = "yes"])
 AM_CONDITIONAL(ENABLE_STOMP, [test "$enable_stomp" = "yes"])
@@ -1982,6 +2220,7 @@ AM_CONDITIONAL(ENABLE_MANPAGES_INSTALL, [test "$enable_manpages_install" != "no"
 AM_CONDITIONAL(ENABLE_NATIVE, [test "$enable_native" != "no"])
 AM_CONDITIONAL(ENABLE_EXTRA_WARNINGS, [test "$enable_extra_warnings" = "yes"])
 AM_CONDITIONAL(ENABLE_TESTING, [test "$enable_tests" != "no"])
+AM_CONDITIONAL(ENABLE_EXAMPLE_MODULES, [test "$enable_example_modules" = "yes"])
 AM_CONDITIONAL(ENABLE_SANITIZER, [test "$with_sanitizer" != "no"])
 AM_CONDITIONAL(ENABLE_DEBUG, [test "$enable_debug" != "no"])
 AM_CONDITIONAL([HAVE_INOTIFY], [test x$ac_cv_func_inotify_init = xyes])
@@ -2042,6 +2281,7 @@ AC_SUBST(JSON_CFLAGS)
 AC_SUBST(JSON_DEPENDENCY)
 AC_SUBST(IVYKIS_SUBDIRS)
 AC_SUBST(RESOLV_LIBS)
+AC_SUBST(LIBBPF_INCLUDE)
 
 AC_SUBST(CURRDATE)
 AC_SUBST(RELEASE_TAG)
@@ -2074,9 +2314,17 @@ echo "  Package name                : $PACKAGE_NAME"
 echo " Compiler options:"
 echo "  compiler                    : $CC"
 echo "  compiler options            : $CFLAGS $CPPFLAGS"
+echo "  C++ enabled                 : ${enable_cpp:=no}"
+if test "x$enable_cpp" = "xyes"; then
+echo "  C++ compiler                : $CXX"
+echo "  C++ compiler options        : $CXXFLAGS"
+fi
 echo "  linker flags                : $LDFLAGS $LIBS"
 echo "  prefix                      : $prefix"
 echo "  linking mode                : $linking_mode"
+if test $ostype = "Darwin"; then
+echo "  classic linking mode        : ${enable_force_classic_linking:=no}"
+fi
 echo "  embedded crypto             : ${with_embedded_crypto:=no}"
 echo "  __thread keyword            : ${ac_cv_have_tls:=no}"
 echo " Test dependencies:"
@@ -2113,6 +2361,8 @@ echo "  HTTP support (module)       : ${enable_http:=no}"
 echo "  AMQP destination (module)   : ${enable_amqp:=no}"
 echo "  STOMP destination (module)  : ${enable_stomp:=no}"
 echo "  MQTT (module)               : ${enable_mqtt:=no}"
+echo "  GRPC (module)               : ${enable_grpc:=no}"
+echo "  Cloud Auth (module)         : ${enable_cloud_auth:=no}"
 echo "  GEOIP2 support (module)     : ${enable_geoip2:=no}"
 echo "  Redis support (module)      : ${enable_redis:=no}"
 echo "  Kafka support (module)      : ${enable_kafka:=no}"
@@ -2122,4 +2372,6 @@ echo "  Python modules              : ${enable_python_modules:=no}"
 echo "  Java                        : ${enable_java:=no}"
 echo "  Java modules                : ${enable_java_modules:=no}"
 echo "  afsnmp module               : ${enable_afsnmp:=no}"
+echo "  eBPF module                 : ${enable_ebpf:=no}"
 echo "  native bindings             : ${enable_native:=no}"
+echo "  Example modules             : ${enable_example_modules:=yes}"

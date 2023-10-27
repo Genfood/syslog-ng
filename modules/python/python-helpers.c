@@ -124,6 +124,31 @@ _py_format_exception_text(gchar *buf, gsize buf_len)
 void
 _py_finish_exception_handling(void)
 {
+  if (PyErr_ExceptionMatches(PyExc_ImportError))
+    {
+      PyObject *exc, *value, *tb;
+
+      PyErr_Fetch(&exc, &value, &tb);
+      PyImportErrorObject *import_error = (PyImportErrorObject *) value;
+      const gchar *module_cstr;
+
+      py_bytes_or_string_to_string(import_error->name, &module_cstr);
+      msg_error("Seems you are missing a module that may be referenced by a "
+                "syslog-ng plugin implemented in Python. These modules "
+                "need to be installed either using your platform's package management "
+                "tools (e.g. apt/dnf/yum) or Python's own package management "
+                "tool (e.g. pip). syslog-ng authors recommend using pip and "
+                "a dedicated Python virtualenv. You can initialize such a "
+                "virtualenv using the `syslog-ng-update-virtualenv` command. "
+                "This command will initialize the virtualenv and install all "
+                "packages needed by plugins shipped with syslog-ng itself "
+                "from the Python Package Index (PyPI). If you need any additional "
+                "Python libraries for your local scripts, you can "
+                "install those using the `pip` command located in the virtualenv's bin directory",
+                evt_tag_str("module", module_cstr));
+      PyErr_Restore(exc, value, tb);
+    }
+
   _py_log_python_traceback_to_stderr();
   PyErr_Clear();
 }
@@ -242,14 +267,6 @@ _insert_to_dict(gpointer key, gpointer value, gpointer dict)
 }
 
 PyObject *
-_py_create_arg_dict(GHashTable *args)
-{
-  PyObject *arg_dict = PyDict_New();
-  g_hash_table_foreach(args, _insert_to_dict, arg_dict);
-  return arg_dict;
-}
-
-PyObject *
 _py_construct_cfg_args(CfgArgs *args)
 {
   PyObject *arg_dict = PyDict_New();
@@ -361,18 +378,18 @@ _py_invoke_void_method_by_name(PyObject *instance, const gchar *method_name, con
 }
 
 gboolean
-_py_invoke_bool_method_by_name_with_args(PyObject *instance, const gchar *method_name,
-                                         GHashTable *args, const gchar *class, const gchar *module)
+_py_invoke_bool_method_by_name_with_options(PyObject *instance, const gchar *method_name,
+                                            const PythonOptions *options, const gchar *class, const gchar *module)
 {
   gboolean result = FALSE;
   PyObject *method = _py_get_optional_method(instance, class, method_name, module);
 
   if (method)
     {
-      PyObject *args_obj = args ? _py_create_arg_dict(args) : NULL;
-      result = _py_invoke_bool_function(method, args_obj, class, module);
+      PyObject *py_options_dict = options ? python_options_create_py_dict(options) : NULL;
+      result = _py_invoke_bool_function(method, py_options_dict, class, module);
 
-      Py_XDECREF(args_obj);
+      Py_XDECREF(py_options_dict);
       Py_DECREF(method);
     }
   return result;
@@ -381,7 +398,7 @@ _py_invoke_bool_method_by_name_with_args(PyObject *instance, const gchar *method
 gboolean
 _py_invoke_bool_method_by_name(PyObject *instance, const gchar *method_name, const gchar *class, const gchar *module)
 {
-  return _py_invoke_bool_method_by_name_with_args(instance, method_name, NULL, class, module);
+  return _py_invoke_bool_method_by_name_with_options(instance, method_name, NULL, class, module);
 }
 
 static void
@@ -394,10 +411,11 @@ _foreach_import(gpointer data, gpointer user_data)
   Py_XDECREF(mod);
 }
 
-void
+gboolean
 _py_perform_imports(GList *imports)
 {
   g_list_foreach(imports, _foreach_import, NULL);
+  return TRUE;
 }
 
 const gchar *

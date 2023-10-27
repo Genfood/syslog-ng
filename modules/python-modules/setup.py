@@ -22,6 +22,42 @@
 #############################################################################
 
 from setuptools import setup
+import platform
+import os
+
+install_addons=int(os.getenv('PYMODULES_BUILTINS_ONLY', '0')) == 0
+
+packages_builtin=[
+  "syslogng",
+  "syslogng.debuggercli",
+]
+requires_builtin=[]
+
+packages_addons=[
+  "syslogng.modules.example",
+  "syslogng.modules.kubernetes",
+  "syslogng.modules.hypr",
+]
+
+requires_addons=[
+  # kubernetes
+  "kubernetes",
+  # hypr
+  "requests",
+]
+
+python_version = platform.python_version_tuple()
+if (int(python_version[0]) == 3 and int(python_version[1]) > 6) or int(python_version[0]) > 3:
+  # Compiling type hinted code does not seem to work on <= 3.6.
+  # We can remove this condition when the centos-7 support is dropped.
+  packages_addons.append("syslogng.modules.s3")
+  requires_addons.append("boto3")  # S3
+
+packages = packages_builtin
+requires = []
+if install_addons:
+  packages = packages + packages_addons
+  requires = requires + requires_addons
 
 setup(name='syslogng',
       version='1.0',
@@ -31,12 +67,5 @@ setup(name='syslogng',
       url='https://www.syslog-ng.org',
       package_data={"": ["scl/*"]},
       exclude_package_data={"": ["*~"]},
-      packages=[
-        "syslogng",
-        "syslogng.debuggercli",
-        "syslogng.modules.example",
-        "syslogng.modules.kubernetes",
-      ],
-      install_requires=[
-          "kubernetes"
-      ])
+      packages=packages,
+      install_requires=requires)

@@ -1,4 +1,5 @@
 #############################################################################
+# Copyright (c) 2023 One Identity LLC.
 # Copyright (c) 2022 Balazs Scheidler <bazsi77@gmail.com>
 #
 # This library is free software; you can redistribute it and/or
@@ -20,6 +21,8 @@
 # COPYING for details.
 #
 #############################################################################
+# pylint: disable=unused-import,function-redefined,useless-parent-delegation
+
 try:
     from _syslogng import LogSource, LogFetcher, LogFetcherResult
     from _syslogng import InstantAckTracker, ConsecutiveAckTracker, BatchedAckTracker
@@ -28,13 +31,19 @@ except ImportError:
     import warnings
     from enum import Enum, auto
 
-    warnings.warn("You have imported the syslogng package outside of syslog-ng, thus some of the functionality is not available. Defining fake classes for those exported by the underlying syslog-ng code")
+    warnings.warn("You have imported the syslogng package outside of syslog-ng, "
+                  "thus some of the functionality is not available. "
+                  "Defining fake classes for those exported by the underlying syslog-ng code")
 
-    LogSource = object
-    LogFetcher = object
-    InstantAckTracker = object
-    ConsecutiveAckTracker = object
-    BatchedAckTracker = object
+    # Fake LogSource
+    class LogSource(dict):
+        def __init__(self):
+            pass
+
+    # Fake LogFetcher
+    class LogFetcher(dict):
+        def __init__(self):
+            pass
 
     class LogFetcherResult(Enum):
         ERROR = auto()
@@ -42,6 +51,23 @@ except ImportError:
         SUCCESS = auto()
         TRY_AGAIN = auto()
         NO_DATA = auto()
+
+    # Fake InstantAckTracker
+    class InstantAckTracker(dict):
+        def __init__(self, ack_callback):
+            self.ack_callback = ack_callback
+
+    # Fake ConsecutiveAckTracker
+    class ConsecutiveAckTracker(dict):
+        def __init__(self, ack_callback):
+            self.ack_callback = ack_callback
+
+    # Fake BatchedAckTracker
+    class BatchedAckTracker(dict):
+        def __init__(self, timeout, batch_size, batched_ack_callback):
+            self.timeout = timeout
+            self.batch_size = batch_size
+            self.batched_ack_callback = batched_ack_callback
 
 
 class LogSource(LogSource):
@@ -57,6 +83,13 @@ class LogSource(LogSource):
     It easily maps to any source mechanism that pushes messages to syslog-ng
     (e.g.  queueing protocols such as mqtt or HTTP server implementations)
     """
+    flags = {}
+    parse_options = None
+
+    def __init__(self):
+        """Constructs this LogSource instance
+        """
+        super().__init__()
 
     def init(self, options):
         """Initialize this LogSource instance
@@ -65,6 +98,10 @@ class LogSource(LogSource):
             bool: True to indicate success
         """
         return True
+
+    def deinit(self):
+        """Deinitialize this LogSource instance
+        """
 
     def run(self):
         """Run the main loop for the source
@@ -82,7 +119,7 @@ class LogSource(LogSource):
         Returns:
             None
         """
-        pass
+        raise NotImplementedError
 
     def post_message(self, msg):
         """Post a message as an output for this source
@@ -117,7 +154,7 @@ class LogSource(LogSource):
         source should stop executing.  The expected result of this function
         is that its run() method returns to its caller.
         """
-        pass
+        raise NotImplementedError
 
 
 class LogFetcher(LogFetcher):
@@ -137,6 +174,14 @@ class LogFetcher(LogFetcher):
     TRY_AGAIN = FETCH_TRY_AGAIN = LogFetcherResult.TRY_AGAIN
     NO_DATA = FETCH_NO_DATA = LogFetcherResult.NO_DATA
 
+    flags = {}
+    parse_options = None
+
+    def __init__(self):
+        """Constructs this LogFetcher instance
+        """
+        super().__init__()
+
     def init(self, options):
         """Initialize this LogFetcher instance
 
@@ -144,6 +189,10 @@ class LogFetcher(LogFetcher):
             bool: True to indicate success
         """
         return True
+
+    def deinit(self):
+        """Deinitialize this LogFetcher instance
+        """
 
     def open(self):
         """Open the connection to the target service
@@ -158,7 +207,6 @@ class LogFetcher(LogFetcher):
 
     def close(self):
         """Close the connection to the target service"""
-        pass
 
     def fetch(self):
         """Function to fetch the next message
@@ -173,4 +221,28 @@ class LogFetcher(LogFetcher):
                 are defined as members in the LogFetcher class or as values
                 in the LogFetchrResult enum.
         """
-        return self.TRY_AGAIN, None
+        raise NotImplementedError
+
+    def request_exit(self):
+        """Request fetch() to exit
+
+        This function is invoked by syslog-ng from its main thread when this
+        source should stop executing.
+        The method is optional, use it when fetch() has blocking operations and
+        it has to be interrupted when shutting down syslog-ng.
+        """
+
+
+class InstantAckTracker(InstantAckTracker):
+    def __init__(self, ack_callback):
+        super().__init__(ack_callback=ack_callback)
+
+
+class ConsecutiveAckTracker(ConsecutiveAckTracker):
+    def __init__(self, ack_callback):
+        super().__init__(ack_callback=ack_callback)
+
+
+class BatchedAckTracker(BatchedAckTracker):
+    def __init__(self, timeout, batch_size, batched_ack_callback):
+        super().__init__(timeout=timeout, batch_size=batch_size, batched_ack_callback=batched_ack_callback)

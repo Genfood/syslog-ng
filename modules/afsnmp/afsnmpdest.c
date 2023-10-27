@@ -461,14 +461,18 @@ snmpdest_dd_format_persist_name(const LogPipe *s)
 }
 
 static const gchar *
-snmpdest_dd_format_stats_instance(LogThreadedDestDriver *s)
+snmpdest_dd_format_stats_key(LogThreadedDestDriver *s, StatsClusterKeyBuilder *kb)
 {
   SNMPDestDriver *self = (SNMPDestDriver *)s;
 
-  static gchar persist_name[1024];
+  stats_cluster_key_builder_add_legacy_label(kb, stats_cluster_label("driver", "snmpdest"));
+  stats_cluster_key_builder_add_legacy_label(kb, stats_cluster_label("host", self->host));
 
-  g_snprintf(persist_name, sizeof(persist_name), "snmpdest,%s,%u", self->host, self->port);
-  return persist_name;
+  gchar num[64];
+  g_snprintf(num, sizeof(num), "%u", self->port);
+  stats_cluster_key_builder_add_legacy_label(kb, stats_cluster_label("port", num));
+
+  return NULL;
 }
 
 static gboolean
@@ -720,8 +724,6 @@ snmpdest_worker_thread_init(LogThreadedDestDriver *d)
   if (!tz && time_zone)
     snmpdest_dd_set_time_zone((LogDriver *)self, time_zone);
 
-  log_template_options_init(&self->template_options, cfg);
-
   snmpdest_dd_session_init(self);
 }
 
@@ -739,7 +741,7 @@ snmpdest_dd_new(GlobalConfig *cfg)
   self->super.worker.thread_deinit = snmpdest_worker_thread_deinit;
   self->super.worker.insert = snmpdest_worker_insert;
 
-  self->super.format_stats_instance = snmpdest_dd_format_stats_instance;
+  self->super.format_stats_key = snmpdest_dd_format_stats_key;
   self->super.stats_source = stats_register_type("snmp");
 
   if (snmp_dest_counter == 0)

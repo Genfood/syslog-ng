@@ -40,7 +40,9 @@ modules_correlation_libsyslog_ng_patterndb_la_SOURCES	=	\
 	modules/correlation/timerwheel.c			\
 	modules/correlation/timerwheel.h			\
 	modules/correlation/patternize.c			\
-	modules/correlation/patternize.h
+	modules/correlation/patternize.h      \
+	modules/correlation/id-counter.h      \
+	modules/correlation/id-counter.c
 
 modules_correlation_libsyslog_ng_patterndb_la_CFLAGS	=	\
 	$(AM_CFLAGS) -fPIC
@@ -59,8 +61,12 @@ modules_correlation_libcorrelation_la_SOURCES			=	\
 	modules/correlation/correlation-parser.c		\
 	modules/correlation/correlation-parser.h		\
 	modules/correlation/correlation-plugin.c		\
+	modules/correlation/grouping-parser.c			\
+	modules/correlation/grouping-parser.h			\
 	modules/correlation/groupingby.c			\
 	modules/correlation/groupingby.h			\
+	modules/correlation/group-lines.c			\
+	modules/correlation/group-lines.h			\
 	$(modules_correlation_libsyslog_ng_patterndb_la_SOURCES)
 modules_correlation_libcorrelation_la_CPPFLAGS		=	\
 	$(AM_CPPFLAGS)						\

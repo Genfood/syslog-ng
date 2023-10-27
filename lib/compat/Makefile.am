@@ -18,7 +18,9 @@ compatinclude_HEADERS		= 	\
 	lib/compat/getent-sun.h		\
 	lib/compat/getent-openbsd.h	\
 	lib/compat/getent-generic.h	\
-	lib/compat/un.h			
+	lib/compat/un.h			\
+	lib/compat/cpp-start.h	\
+	lib/compat/cpp-end.h
 
 compat_sources			= 	\
 	lib/compat/getutent.c		\
@@ -29,6 +31,7 @@ compat_sources			= 	\
 	lib/compat/strcasestr.c		\
 	lib/compat/strtok_r.c		\
 	lib/compat/strnlen.c		\
+	lib/compat/getline.c		\
 	lib/compat/time.c		\
 	lib/compat/openssl_support.c	\
 	lib/compat/getent-sun.c		\

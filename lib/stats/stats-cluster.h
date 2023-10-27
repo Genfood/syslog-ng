@@ -46,6 +46,35 @@ enum
   SCS_SOURCE_MASK    = 0xff
 };
 
+typedef enum _StatsClusterUnit
+{
+  SCU_NONE = 0,
+
+  SCU_SECONDS,
+  SCU_MINUTES,
+  SCU_HOURS,
+  SCU_MILLISECONDS,
+  SCU_NANOSECONDS,
+
+  SCU_BYTES,
+  SCU_KIB,
+  SCU_MIB,
+  SCU_GIB,
+} StatsClusterUnit;
+
+typedef enum _StatsClusterFrameOfReference
+{
+  SCFOR_NONE = 0,
+  SCFOR_ABSOLUTE,
+
+  /*
+   * Only applicable for counters with seconds, minutes or hours unit.
+   * Has a 1 second precision.
+   * Results in a positive value for timestamps older than the time of query.
+   */
+  SCFOR_RELATIVE_TO_TIME_OF_QUERY,
+} StatsClusterFrameOfReference;
+
 typedef struct _StatsCounterGroup StatsCounterGroup;
 typedef struct _StatsCounterGroupInit StatsCounterGroupInit;
 
@@ -98,11 +127,17 @@ struct _StatsClusterKey
 
   struct
   {
+    StatsClusterUnit stored_unit;
+    StatsClusterFrameOfReference frame_of_reference;
+  } formatting;
+
+  struct
+  {
     const gchar *id;
     /* syslog-ng component/driver/subsystem that registered this cluster */
     guint16 component;
     const gchar *instance;
-    gboolean set:1;
+    guint set:1;
   } legacy;
   StatsCounterGroupInit counter_group_init;
 };
@@ -140,6 +175,7 @@ void stats_cluster_foreach_counter(StatsCluster *self, StatsForeachCounterFunc f
 
 StatsClusterKey *stats_cluster_key_clone(StatsClusterKey *dst, const StatsClusterKey *src);
 void stats_cluster_key_cloned_free(StatsClusterKey *self);
+void stats_cluster_key_free(StatsClusterKey *self);
 gboolean stats_cluster_key_equal(const StatsClusterKey *key1, const StatsClusterKey *key2);
 guint stats_cluster_key_hash(const StatsClusterKey *self);
 
