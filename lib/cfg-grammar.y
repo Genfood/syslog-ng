@@ -29,10 +29,6 @@
    with care. If you need additional headers, please look for a
    massive list of includes further below. */
 
-#pragma GCC diagnostic ignored "-Wswitch-default"
-#if (defined(__GNUC__) && __GNUC__ >= 6) || (defined(__clang__) && __clang_major__ >= 10)
-#  pragma GCC diagnostic ignored "-Wmisleading-indentation"
-#endif
 /* YYSTYPE and YYLTYPE is defined by the lexer */
 #include "cfg-lexer.h"
 #include "cfg-grammar-internal.h"
@@ -61,6 +57,14 @@
 %define parse.error verbose
 
 %code {
+
+#pragma GCC diagnostic ignored "-Wswitch-default"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+
+#if (defined(__GNUC__) && __GNUC__ >= 6) || (defined(__clang__) && __clang_major__ >= 10)
+#  pragma GCC diagnostic ignored "-Wmisleading-indentation"
+#endif
+
 
 # define YYLLOC_DEFAULT(Current, Rhs, N)                                \
   do {                                                                  \
@@ -144,10 +148,22 @@
 %token LL_CONTEXT_OPTIONS             19
 %token LL_CONTEXT_CONFIG              20
 %token LL_CONTEXT_TEMPLATE_REF        21
+%token LL_CONTEXT_FILTERX             22
+%token LL_CONTEXT_FILTERX_FUNC        23
 
 /* this is a placeholder for unit tests, must be the latest & largest */
-%token LL_CONTEXT_MAX                 22
+%token LL_CONTEXT_MAX                 24
 
+/* operators in the filter language, the order of this determines precedence */
+%right KW_ASSIGN 9000
+%left  KW_OR 9001
+%left  KW_AND 9002
+%left  KW_STR_EQ 9003 KW_STR_NE 9004, KW_TA_EQ 9005, KW_TA_NE 9006, KW_TAV_EQ 9007, KW_TAV_NE 9008
+%left  KW_STR_LT 9009, KW_STR_LE 9010, KW_STR_GE, 9011 KW_STR_GT, 9012, KW_TA_LT 9013, KW_TA_LE 9014, KW_TA_GE 9015, KW_TA_GT 9016
+
+%left  '+' '-'
+%left  '*' '/'
+%left '.' '[' ']' KW_NOT 9017
 
 /* statements */
 %token KW_SOURCE                      10000
@@ -163,6 +179,7 @@
 %token KW_IF                          10010
 %token KW_ELSE                        10011
 %token KW_ELIF                        10012
+%token KW_FILTERX                     10013
 
 /* source & destination items */
 %token KW_INTERNAL                    10020
@@ -339,6 +356,7 @@
 %token <cptr> LL_BLOCK                10435
 %token <cptr> LL_PLUGIN	              10436
 %token <cptr> LL_TEMPLATE_REF         10437
+%token <cptr> LL_MESSAGE_REF          10438
 
 %destructor { free($$); } <cptr>
 
@@ -392,8 +410,10 @@
 %type   <ptr> template_content_list
 %type   <ptr> template_name_or_content
 %type   <ptr> template_name_or_content_tail
+%type   <num> type_hint
 
 %type   <ptr> filter_content
+%type   <ptr> filterx_content
 
 %type   <ptr> parser_content
 
@@ -628,6 +648,16 @@ filter_content
 	  }
 	;
 
+filterx_content
+        : _filterx_context_push <ptr>{
+            GList *filterx_stmts = NULL;
+
+	    CHECK_ERROR_WITHOUT_MESSAGE(cfg_parser_parse(&filterx_parser, lexer, (gpointer *) &filterx_stmts, NULL), @$);
+
+            $$ = log_expr_node_new_pipe(log_filterx_pipe_new(filterx_stmts, configuration), &@$);
+	  } _filterx_context_pop			{ $$ = $2; }
+	;
+
 parser_content
         :
           {
@@ -693,6 +723,7 @@ log_item
         | KW_SOURCE '{' source_content '}'      { $$ = log_expr_node_new_source(NULL, $3, &@$); }
         | KW_FILTER '(' string ')'		{ $$ = log_expr_node_new_filter_reference($3, &@$); free($3); }
         | KW_FILTER '{' filter_content '}'      { $$ = log_expr_node_new_filter(NULL, $3, &@$); }
+        | KW_FILTERX '{' filterx_content '}'    { $$ = log_expr_node_new_filter(NULL, $3, &@$); }
         | KW_PARSER '(' string ')'              { $$ = log_expr_node_new_parser_reference($3, &@$); free($3); }
         | KW_PARSER '{' parser_content '}'      { $$ = log_expr_node_new_parser(NULL, $3, &@$); }
         | KW_REWRITE '(' string ')'             { $$ = log_expr_node_new_rewrite_reference($3, &@$); free($3); }
@@ -893,15 +924,14 @@ template_content_inner
           CHECK_ERROR_GERROR(log_template_compile($<ptr>0, $1, &error), @1, error, "Error compiling template");
           free($1);
         }
-        | LL_IDENTIFIER '(' string_or_number ')'
+        | type_hint '(' string_or_number ')'
         {
           GError *error = NULL;
 
           CHECK_ERROR_GERROR(log_template_compile($<ptr>0, $3, &error), @3, error, "Error compiling template");
           free($3);
 
-          CHECK_ERROR_GERROR(log_template_set_type_hint($<ptr>0, $1, &error), @1, error, "Error setting the template type-hint \"%s\"", $1);
-          free($1);
+          log_template_set_type_hint_value($<ptr>0, $1);
         }
         | LL_NUMBER
         {
@@ -917,6 +947,17 @@ template_content_inner
           log_template_set_type_hint($<ptr>0, "float", NULL);
         }
         ;
+
+type_hint
+        : LL_IDENTIFIER
+          {
+            LogMessageValueType type;
+            GError *error = NULL;
+
+            CHECK_ERROR_GERROR(type_hint_parse($1, &type, &error), @1, error, "Unknown type hint");
+            free($1);
+            $$ = type;
+          };
 
 template_content
         : <ptr>{
@@ -1312,12 +1353,26 @@ threaded_dest_driver_workers_option
 
 /* implies dest_driver_option */
 threaded_dest_driver_general_option
+        : threaded_dest_driver_general_option_noflags
+        | threaded_dest_driver_flags_option
+        ;
+
+threaded_dest_driver_general_option_noflags
 	: KW_RETRIES '(' positive_integer ')'
         {
           log_threaded_dest_driver_set_max_retries_on_error(last_driver, $3);
         }
         | KW_TIME_REOPEN '(' positive_integer ')' { log_threaded_dest_driver_set_time_reopen(last_driver, $3); }
         | dest_driver_option
+        ;
+
+threaded_dest_driver_flags_option
+        : KW_FLAGS '(' threaded_dest_driver_flags ')'
+        ;
+
+threaded_dest_driver_flags
+        : string threaded_dest_driver_flags     { CHECK_ERROR(log_threaded_dest_driver_process_flag(last_driver, $1), @1, "Unknown flag \"%s\"", $1); free($1); }
+        |
         ;
 
 /* implies source_driver_option and source_option */
@@ -1327,6 +1382,10 @@ threaded_source_driver_option
         | { last_msg_format_options = log_threaded_source_driver_get_parse_options(last_driver); } msg_format_option
         | { last_source_options = log_threaded_source_driver_get_source_options(last_driver); } source_option
         | source_driver_option
+        ;
+
+threaded_source_driver_workers_option
+        : KW_WORKERS '(' positive_integer ')' { log_threaded_source_driver_set_num_workers(last_driver, $3); }
         ;
 
 threaded_fetcher_driver_option
@@ -1424,10 +1483,10 @@ dest_writer_options
 	|
 	;
 
-dest_writer_option
-        /* NOTE: plugins need to set "last_writer_options" in order to incorporate this rule in their grammar */
 
-	: KW_FLAGS '(' dest_writer_options_flags ')' { last_writer_options->options = $3; }
+/* NOTE: plugins need to set "last_writer_options" in order to incorporate this rule in their grammar */
+dest_writer_option
+        : KW_FLAGS '(' dest_writer_options_flags ')'
 	| KW_FLUSH_LINES '(' nonnegative_integer ')'		{ last_writer_options->flush_lines = $3; }
 	| KW_FLUSH_TIMEOUT '(' positive_integer ')'	{ }
         | KW_SUPPRESS '(' nonnegative_integer ')'            { last_writer_options->suppress = $3; }
@@ -1447,9 +1506,9 @@ dest_writer_option
 	;
 
 dest_writer_options_flags
-	: normalized_flag dest_writer_options_flags   { $$ = log_writer_options_lookup_flag($1) | $2; free($1); }
-	|					      { $$ = 0; }
-	;
+        : string dest_writer_options_flags     { CHECK_ERROR(log_writer_options_process_flag(last_writer_options, $1), @1, "Unknown flag \"%s\"", $1); free($1); }
+        |
+        ;
 
 file_perm_option
 	: KW_OWNER '(' string_or_number ')'	{ file_perm_options_set_file_uid(last_file_perm_options, $3); free($3); }
@@ -1621,6 +1680,8 @@ _rewrite_context_push: { cfg_lexer_push_context(lexer, LL_CONTEXT_REWRITE, NULL,
 _rewrite_context_pop: { cfg_lexer_pop_context(lexer); };
 _filter_context_push: { cfg_lexer_push_context(lexer, LL_CONTEXT_FILTER, NULL, "filter statement"); };
 _filter_context_pop: { cfg_lexer_pop_context(lexer); };
+_filterx_context_push: { cfg_lexer_push_context(lexer, LL_CONTEXT_FILTERX, NULL, "filterx statement"); };
+_filterx_context_pop: { cfg_lexer_pop_context(lexer); };
 _log_context_push: { cfg_lexer_push_context(lexer, LL_CONTEXT_LOG, NULL, "log statement"); };
 _log_context_pop: { cfg_lexer_pop_context(lexer); };
 _block_def_context_push: { cfg_lexer_push_context(lexer, LL_CONTEXT_BLOCK_DEF, block_def_keywords, "block definition"); };

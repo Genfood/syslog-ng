@@ -207,6 +207,7 @@ LogMacroDef macros[] =
   { "SOURCEIP", M_SOURCE_IP },
   { "DESTIP", M_DEST_IP },
   { "DESTPORT", M_DEST_PORT },
+  { "IP_PROTO", M_IP_PROTOCOL },
   { "PROTO", M_PROTOCOL },
   { "RAWMSG_SIZE", M_RAWMSG_SIZE },
   { "SEQNUM", M_SEQNUM },
@@ -228,7 +229,7 @@ LogMacroDef macros[] =
 };
 
 
-static GTimeVal app_uptime;
+static struct timespec app_uptime;
 static GHashTable *macro_hash;
 
 static void
@@ -267,6 +268,22 @@ _is_message_dest_an_ip_address(const LogMessage *msg)
     return TRUE;
 #endif
   return FALSE;
+}
+
+static gint
+_get_originating_ip_protocol(const LogMessage *msg)
+{
+  if (!msg->saddr)
+    return 0;
+  if (g_sockaddr_inet_check(msg->saddr))
+    return 4;
+  if (g_sockaddr_inet6_check(msg->saddr))
+    {
+      if (g_sockaddr_inet6_is_v4_mapped(msg->saddr))
+        return 4;
+      return 6;
+    }
+  return 0;
 }
 
 static void
@@ -619,6 +636,12 @@ log_macro_expand(gint id, LogTemplateEvalOptions *options, const LogMessage *msg
       format_uint32_padded(result, 0, 0, 10, port);
       break;
     }
+    case M_IP_PROTOCOL:
+    {
+      t = LM_VT_INTEGER;
+      format_uint32_padded(result, 0, 0, 10, _get_originating_ip_protocol(msg));
+      break;
+    }
     case M_PROTOCOL:
     {
       t = LM_VT_INTEGER;
@@ -690,10 +713,10 @@ log_macro_expand(gint id, LogTemplateEvalOptions *options, const LogMessage *msg
     }
     case M_SYSUPTIME:
     {
-      GTimeVal ct;
+      struct timespec ct;
 
-      g_get_current_time(&ct);
-      format_uint64_padded(result, 0, 0, 10, g_time_val_diff(&ct, &app_uptime) / 1000 / 10);
+      clock_gettime(CLOCK_MONOTONIC, &ct);
+      format_uint64_padded(result, 0, 0, 10, timespec_diff_msec(&ct, &app_uptime) / 10);
       break;
     }
 
@@ -737,7 +760,7 @@ log_macros_global_init(void)
   gint i;
 
   /* init the uptime (SYSUPTIME macro) */
-  g_get_current_time(&app_uptime);
+  clock_gettime(CLOCK_MONOTONIC, &app_uptime);
 
   macro_hash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (i = 0; macros[i].name; i++)

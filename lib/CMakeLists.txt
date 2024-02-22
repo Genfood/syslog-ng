@@ -19,6 +19,7 @@ add_subdirectory(control)
 add_subdirectory(healthcheck)
 add_subdirectory(debugger)
 add_subdirectory(filter)
+add_subdirectory(filterx)
 add_subdirectory(logmsg)
 add_subdirectory(logproto)
 add_subdirectory(multi-line)
@@ -44,6 +45,7 @@ set(LIB_SUBDIR_HEADERS
     ${HEALTHCHECK_HEADERS}
     ${DEBUGGER_HEADERS}
     ${FILTER_HEADERS}
+    ${FILTERX_HEADERS}
     ${LOGMSG_HEADERS}
     ${LOGPROTO_HEADERS}
     ${MULTI_LINE_HEADERS}
@@ -63,6 +65,7 @@ set(LIB_SUBDIR_HEADERS
     ${LOGTHRSOURCE_HEADERS}
     ${SIGNAL_SLOT_CONNECTOR_HEADERS}
     ${CMAKE_CURRENT_BINARY_DIR}/filter/filter-expr-grammar.h
+    ${CMAKE_CURRENT_BINARY_DIR}/filterx/filterx-grammar.h
     ${CMAKE_CURRENT_BINARY_DIR}/rewrite/rewrite-expr-grammar.h
     ${CMAKE_CURRENT_BINARY_DIR}/parser/parser-expr-grammar.h
 )
@@ -127,6 +130,7 @@ set (LIB_HEADERS
     mainloop-control.h
     msg-format.h
     msg-stats.h
+    on-error.h
     parse-number.h
     pathutils.h
     persist-state.h
@@ -224,6 +228,7 @@ set(LIB_SOURCES
     mainloop-control.c
     msg-format.c
     msg-stats.c
+    on-error.c
     parse-number.c
     pathutils.c
     persist-state.c
@@ -256,6 +261,7 @@ set(LIB_SOURCES
     ${HEALTHCHECK_SOURCES}
     ${DEBUGGER_SOURCES}
     ${FILTER_SOURCES}
+    ${FILTERX_SOURCES}
     ${LOGMSG_SOURCES}
     ${LOGPROTO_SOURCES}
     ${MULTI_LINE_SOURCES}
@@ -276,6 +282,7 @@ set(LIB_SOURCES
     ${PROJECT_BINARY_DIR}/lib/cfg-lex.c
     ${PROJECT_BINARY_DIR}/lib/pragma-grammar.c
     ${CMAKE_CURRENT_BINARY_DIR}/filter/filter-expr-grammar.c
+    ${CMAKE_CURRENT_BINARY_DIR}/filterx/filterx-grammar.c
     ${CMAKE_CURRENT_BINARY_DIR}/rewrite/rewrite-expr-grammar.c
     ${CMAKE_CURRENT_BINARY_DIR}/parser/parser-expr-grammar.c
     )
@@ -313,6 +320,17 @@ set_source_files_properties(
     PROPERTIES
     COMPILE_FLAGS ${BISON_BUILT_SOURCE_CFLAGS})
 
+generate_y_from_ym (lib/filterx/filterx-grammar)
+bison_target(FilterXGrammar
+    ${CMAKE_CURRENT_BINARY_DIR}/filterx/filterx-grammar.y
+    ${CMAKE_CURRENT_BINARY_DIR}/filterx/filterx-grammar.c
+    COMPILE_FLAGS ${BISON_FLAGS})
+add_flex_bison_dependency(CfgLexer FilterXGrammar)
+set_source_files_properties(
+    ${CMAKE_CURRENT_BINARY_DIR}/filterx/filterx-grammar.c
+    PROPERTIES
+    COMPILE_FLAGS ${BISON_BUILT_SOURCE_CFLAGS})
+    
 generate_y_from_ym (lib/rewrite/rewrite-expr-grammar)
 bison_target(RewriteExprGrammar
     ${CMAKE_CURRENT_BINARY_DIR}/rewrite/rewrite-expr-grammar.y
@@ -373,11 +391,14 @@ target_link_libraries(
     OpenSSL::Crypto
     Threads::Threads
     secret-storage
+    json-c
 )
 
 set_target_properties(syslog-ng
     PROPERTIES VERSION ${SYSLOG_NG_VERSION}
     SOVERSION ${SYSLOG_NG_VERSION})
+
+gperf_generate(severity-aliases.table ${CMAKE_CURRENT_BINARY_DIR}/severity-aliases.h syslog-ng)
 
 if (${IVYKIS_INTERNAL})
    add_dependencies(syslog-ng IVYKIS)
@@ -393,6 +414,7 @@ install(FILES ${CONTROL_HEADERS} DESTINATION include/syslog-ng/control)
 install(FILES ${HEALTHCHECK_HEADERS} DESTINATION include/syslog-ng/healthcheck)
 install(FILES ${DEBUGGER_HEADERS} DESTINATION include/syslog-ng/debugger)
 install(FILES ${FILTER_HEADERS} DESTINATION include/syslog-ng/filter)
+install(FILES ${FILTERX_HEADERS} DESTINATION include/syslog-ng/filterx)
 install(FILES ${LOGMSG_HEADERS} DESTINATION include/syslog-ng/logmsg)
 install(FILES ${LOGPROTO_HEADERS} DESTINATION include/syslog-ng/logproto)
 install(FILES ${PARSER_HEADERS} DESTINATION include/syslog-ng/parser)

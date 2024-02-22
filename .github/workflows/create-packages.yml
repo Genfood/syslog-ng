@@ -22,8 +22,8 @@ on:
           "ubuntu-focal",
           "ubuntu-jammy",
           "ubuntu-lunar",
-          "centos-7",
-          "fedora-37"
+          "ubuntu-mantic",
+          "fedora-39"
         ]'
 
 

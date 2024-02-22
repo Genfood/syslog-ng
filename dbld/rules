@@ -1,8 +1,8 @@
 #!/usr/bin/make -f
 
 BUILDER_IMAGES=		\
-	centos-7 	\
-	fedora-37	\
+	centos-8 	\
+	fedora-39	\
 	debian-stretch	\
 	debian-buster	\
 	debian-bullseye	\
@@ -12,6 +12,7 @@ BUILDER_IMAGES=		\
 	ubuntu-focal	\
 	ubuntu-jammy \
 	ubuntu-lunar	\
+	ubuntu-mantic	\
 	kira		\
 	tarball
 
@@ -19,7 +20,7 @@ IMAGES=${BUILDER_IMAGES} devshell
 DEFAULT_IMAGE ?= ubuntu-jammy
 TARBALL_IMAGE ?= tarball
 DEFAULT_DEB_IMAGE=ubuntu-jammy
-DEFAULT_RPM_IMAGE=centos-7
+DEFAULT_RPM_IMAGE=centos-8
 DOCKER=docker
 CONTAINER_REGISTRY ?= ghcr.io/syslog-ng
 MODE ?= snapshot
@@ -260,7 +261,7 @@ exec-%: setup
 	$(DOCKER) exec -ti  $$container $(EXEC_COMMAND)
 
 login: login-$(DEFAULT_IMAGE)
-login-%: EXEC_COMMAND=gosu $(shell whoami) /dbld/shell
+login-%: EXEC_COMMAND=sudo -u $(shell whoami) /dbld/shell
 login-%: exec-%
 	@true
 

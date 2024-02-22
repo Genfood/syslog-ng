@@ -1,11 +1,13 @@
 SCL_SUBDIRS	= \
 	apache		\
+	arr		\
 	cee		\
 	cim		\
 	cisco		\
 	collectd \
 	checkpoint	\
 	default-network-drivers	\
+	darwinosl \
 	discord \
 	elasticsearch	\
 	ewmm		\
@@ -15,6 +17,7 @@ SCL_SUBDIRS	= \
 	graylog2	\
 	hdfs		\
 	iptables	\
+	jellyfin	\
 	junos		\
 	kafka		\
 	linux-audit	\
@@ -26,11 +29,15 @@ SCL_SUBDIRS	= \
 	mbox		\
 	netskope	\
 	nodejs		\
+	openobserve \
 	opensearch	\
 	osquery	\
 	pacct		\
 	paloalto 	\
+	pihole		\
+	pgsql 	\
 	python		\
+	qbittorrent	\
 	rewrite	\
 	slack \
 	snmptrap	\

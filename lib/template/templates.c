@@ -128,7 +128,7 @@ _calculate_if_literal(LogTemplate *self)
   if (!self->compiled_template)
     return TRUE;
 
-  if (self->escape || self->compiled_template->next)
+  if (self->compiled_template->next)
     return FALSE;
 
   return log_template_elem_is_literal_string((LogTemplateElem *) self->compiled_template->data);
@@ -323,6 +323,12 @@ log_template_set_type_hint(LogTemplate *self, const gchar *type_hint, GError **e
   return result;
 }
 
+void
+log_template_set_type_hint_value(LogTemplate *self, LogMessageValueType type_hint)
+{
+  self->explicit_type_hint = self->type_hint = type_hint;
+}
+
 /* NOTE: we should completely get rid off the name property of templates,
  * we basically use it at two locations:
  *
@@ -490,34 +496,7 @@ log_template_error_quark(void)
 gboolean
 log_template_on_error_parse(const gchar *strictness, gint *out)
 {
-  const gchar *p = strictness;
-  gboolean silently = FALSE;
-
-  if (!strictness)
-    {
-      *out = ON_ERROR_DROP_MESSAGE;
-      return TRUE;
-    }
-
-  if (strncmp(strictness, "silently-", strlen("silently-")) == 0)
-    {
-      silently = TRUE;
-      p = strictness + strlen("silently-");
-    }
-
-  if (strcmp(p, "drop-message") == 0)
-    *out = ON_ERROR_DROP_MESSAGE;
-  else if (strcmp(p, "drop-property") == 0)
-    *out = ON_ERROR_DROP_PROPERTY;
-  else if (strcmp(p, "fallback-to-string") == 0)
-    *out = ON_ERROR_FALLBACK_TO_STRING;
-  else
-    return FALSE;
-
-  if (silently)
-    *out |= ON_ERROR_SILENT;
-
-  return TRUE;
+  return on_error_parse(strictness, out);
 }
 
 void

@@ -1,6 +1,11 @@
 
 set(GRPC_DEPS_FOUND FALSE)
 
+# TODO: Fix the remaining GRPC issues on APPLE
+if (APPLE AND NOT DEFINED ENABLE_GRPC)
+  set(ENABLE_GRPC FALSE)
+endif ()
+
 if (NOT DEFINED ENABLE_GRPC OR ENABLE_GRPC)
   set(GRPC_DEPS_FOUND TRUE)
 
@@ -66,11 +71,13 @@ if (ENABLE_GRPC)
     protobuf::libprotobuf)
 
   add_subdirectory(credentials)
+  add_subdirectory(metrics)
   add_subdirectory(protos)
 endif()
 
 # These are intentionally not inside the above if (ENABLE_GRPC) block
-# Let the module_switch-es take effect and is being always visible
+# Let any other possible module_switch-es take effect and is being always visible
 # (both modules are protected via ENABLE_GRPC as well)
 add_subdirectory(loki)
 add_subdirectory(otel)
+add_subdirectory(bigquery)

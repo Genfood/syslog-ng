@@ -16,15 +16,22 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 project(syslog-ng C)
 
-if (APPLE)
-  option(ENABLE_CPP "Enable C++" OFF)
-else()
-  option(ENABLE_CPP "Enable C++" ON)
+option(ENABLE_CPP "Enable C++" ON)
+
+if(APPLE)
+  # Turned out that even the latest gcc has no proper support of the required ObjC version
+  # Once gcc was able to compile our ObjC modules properly this requirement could be removed again
+  set(CMAKE_OBJC_COMPILER clang)
+
+  set_property(GLOBAL PROPERTY OBJC_STANDARD 11)
+  set_property(GLOBAL PROPERTY OBJC_STANDARD_REQUIRED ON)
 endif()
 
 if (ENABLE_CPP)
   enable_language(CXX)
-  set(CMAKE_CXX_STANDARD 11 CACHE STRING "C++ standard")
+  set(CMAKE_CXX_STANDARD 14 CACHE STRING "C++ standard")
+  set(CMAKE_CXX_STANDARD_REQUIRED OFF CACHE BOOL "C++ standard is a requirement")
+  set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "C++ compiler specific extensions")
   set(SYSLOG_NG_ENABLE_CPP ${ENABLE_CPP})
 endif()
 
@@ -38,6 +45,7 @@ include(ExternalProject)
 include(external_or_find_package)
 include(add_module)
 include(module_switch)
+include(FindGperf)
 
 find_package(Git QUIET)
 if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
@@ -226,16 +234,31 @@ find_package(BISON 3.7.6 REQUIRED)
 
 string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\..*$" _dummy "${BISON_VERSION}")
 
-set(GLIB_COMPILE_DEFINITIONS
-  GLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_32
-)
 find_package(GLIB 2.32.0 REQUIRED COMPONENTS gmodule gthread)
 
 set(CMAKE_REQUIRED_INCLUDES ${GLIB_INCLUDE_DIRS})
 set(CMAKE_REQUIRED_LIBRARIES ${GLIB_LIBRARIES})
 check_symbol_exists(g_list_copy_deep "glib.h" SYSLOG_NG_HAVE_G_LIST_COPY_DEEP)
+check_symbol_exists(g_memdup2 "glib.h" SYSLOG_NG_HAVE_MEMDUP2)
 check_symbol_exists(g_ptr_array_find_with_equal_func "glib.h" SYSLOG_NG_HAVE_G_PTR_ARRAY_FIND_WITH_EQUAL_FUNC)
 check_symbol_exists(g_canonicalize_filename "glib.h" SYSLOG_NG_HAVE_G_CANONICALIZE_FILENAME)
+
+# only set MIN_REQUIRED to 2.68 if we know that we are at least on that version.
+# On CentOS7/SLES12 we don't have recent enough glib but with compat
+# wrappers we can compile. Bad news is that if we don't set to 2.68 at least,
+# we can't compile on new platforms with clang.
+#
+# Best of both worlds: we set to 2.68 if we have that version, so we
+# get clang to compile our code, otherwise we set it to 2.32.
+if (PC_GLIB_VERSION VERSION_GREATER_EQUAL "2.68")
+
+  set_target_properties(GLib::GLib PROPERTIES
+        INTERFACE_COMPILE_DEFINITIONS "GLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_68")
+
+else()
+  set_target_properties(GLib::GLib PROPERTIES
+        INTERFACE_COMPILE_DEFINITIONS "GLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_32")
+endif()
 
 find_package(RabbitMQ)
 if (RabbitMQ_FOUND)
@@ -347,7 +370,7 @@ set_target_properties(check-copyright PROPERTIES
 if (CRITERION_FOUND)
   option(BUILD_TESTING "Enable unit tests" ON)
 else()
-  option(BUILD_TESTING  "Enable unit tests" OFF)
+  option(BUILD_TESTING "Enable unit tests" OFF)
 endif()
 
 include(add_tests)
@@ -365,7 +388,14 @@ if (BUILD_TESTING)
       "G_DEBUG=fatal-warnings,fatal-criticals,gc-friendly")
     include(CTest)
 
+    # This flag might be a security issue, do not use in production code, unfortunately we still need it for criterion tests and the current mocking soution
+    if (APPLE)
+      SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-flat_namespace")
+    endif()
+
     add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND} -j $$(nproc) --output-on-failure)
+    # This one is useful to see the failed tests in details
+    add_custom_target(check_failed COMMAND ${CMAKE_CTEST_COMMAND} -j $$(nproc) --rerun-failed --output-on-failure)
   endif()
 endif()
 
@@ -421,10 +451,15 @@ add_compile_options(${IMPORTANT_WARNINGS} ${ACCEPTABLE_WARNINGS} ${EXTRA_WARNING
 # Sanatizer configuration
 set(SANITIZER "OFF" CACHE STRING "Enable clang sanitizer")
 
-set_property(CACHE SANITIZER PROPERTY STRINGS OFF address undefined)
+set_property(CACHE SANITIZER PROPERTY STRINGS OFF address thread undefined address-all)
 
 if (SANITIZER)
-  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O1 -fsanitize=${SANITIZER} -fno-omit-frame-pointer")
+  SET(SANITIZE_MODE "${SANITIZER}")
+  if (SANITIZER MATCHES address-all)
+    SET(SANITIZE_MODE "address")
+    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-address-use-after-scope -fsanitize-address-use-after-return=runtime")
+  endif()
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O1 -fsanitize=${SANITIZE_MODE} -fno-omit-frame-pointer -fno-optimize-sibling-calls")
 endif()
 
 

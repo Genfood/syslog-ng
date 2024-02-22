@@ -61,6 +61,7 @@ class SyslogNgConfig(object):
             "version": version,
             "includes": [],
             "global_options": {},
+            "preamble": "",
             "templates": [],
             "statement_groups": [],
             "logpath_groups": [],
@@ -93,6 +94,9 @@ class SyslogNgConfig(object):
 
     def update_global_options(self, **options):
         self.__syslog_ng_config["global_options"].update(options)
+
+    def add_preamble(self, preamble):
+        self.__syslog_ng_config["preamble"] += "\n" + preamble
 
     def add_template(self, template):
         self.__syslog_ng_config["templates"].append(template)
@@ -161,6 +165,9 @@ class SyslogNgConfig(object):
 
     def create_mariadb_audit_parser(self, **options):
         return Parser("mariadb-audit-parser", **options)
+
+    def create_postgresql_csvlog_parser(self, **options):
+        return Parser("postgresql-csvlog-parser", **options)
 
     def create_file_destination(self, **options):
         file_destination = FileDestination(**options)

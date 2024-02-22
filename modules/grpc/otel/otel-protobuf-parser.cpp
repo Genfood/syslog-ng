@@ -20,7 +20,6 @@
  *
  */
 
-#include <inttypes.h>
 
 #include "otel-protobuf-parser.hpp"
 
@@ -28,7 +27,11 @@
 #include "logmsg/type-hinting.h"
 #include "scanner/list-scanner/list-scanner.h"
 #include "rewrite/rewrite-set-pri.h"
+#include "str-repr/encode.h"
+#include "scratch-buffers.h"
 #include "compat/cpp-end.h"
+
+#include <inttypes.h>
 
 using namespace google::protobuf;
 using namespace opentelemetry::proto::resource::v1;
@@ -110,6 +113,47 @@ _set_value_with_prefix(LogMessage *msg, std::string &key_buffer, size_t key_pref
 }
 
 static const std::string &
+_serialize_ArrayValue(const AnyValue &value, LogMessageValueType *type, std::string *buffer)
+{
+  bool is_all_strings = true;
+
+  for (const AnyValue &element : value.array_value().values())
+    {
+      if (element.value_case() == AnyValue::kStringValue)
+        continue;
+
+      is_all_strings = false;
+      break;
+    }
+
+  if (!is_all_strings)
+    {
+      *type = LM_VT_PROTOBUF;
+      value.SerializePartialToString(buffer);
+      return *buffer;
+    }
+
+  ScratchBuffersMarker marker;
+  GString *scratch_buffer = scratch_buffers_alloc_and_mark(&marker);
+  bool first = true;
+
+  for (const AnyValue &element : value.array_value().values())
+    {
+      if (!first)
+        g_string_append_c(scratch_buffer, ',');
+
+      str_repr_encode_append(scratch_buffer, element.string_value().c_str(), -1, ",");
+      first = false;
+    }
+
+  *type = LM_VT_LIST;
+  buffer->assign(scratch_buffer->str, scratch_buffer->len);
+
+  scratch_buffers_reclaim_marked(marker);
+  return *buffer;
+}
+
+static const std::string &
 _serialize_AnyValue(const AnyValue &value, LogMessageValueType *type, std::string *buffer)
 {
   char number_buf[G_ASCII_DTOSTR_BUF_SIZE];
@@ -117,6 +161,7 @@ _serialize_AnyValue(const AnyValue &value, LogMessageValueType *type, std::strin
   switch (value.value_case())
     {
     case AnyValue::kArrayValue:
+      return _serialize_ArrayValue(value, type, buffer);
     case AnyValue::kKvlistValue:
       *type = LM_VT_PROTOBUF;
       value.SerializePartialToString(buffer);
@@ -1196,6 +1241,52 @@ syslogng::grpc::otel::ProtobufParser::set_syslog_ng_macros(LogMessage *msg, cons
 }
 
 void
+syslogng::grpc::otel::ProtobufParser::set_syslog_ng_address(LogMessage *msg, GSockAddr **sa,
+                                                            const KeyValueList &addr_attributes)
+{
+  const std::string *addr_bytes = NULL;
+  int port = 0;
+
+  for (const KeyValue &attr : addr_attributes.values())
+    {
+      const std::string &name = attr.key();
+      if (name.compare("addr") == 0)
+        {
+          if (!_value_case_equals(msg, attr, AnyValue::kBytesValue))
+            continue;
+          addr_bytes = &attr.value().bytes_value();
+        }
+      else if (name.compare("port") == 0)
+        {
+          if (!_value_case_equals(msg, attr, AnyValue::kIntValue))
+            continue;
+          port = attr.value().int_value();
+        }
+    }
+  if (!addr_bytes)
+    return;
+
+  if (addr_bytes->length() == 4)
+    {
+      /* ipv4 */
+      struct sockaddr_in sin;
+      sin.sin_family = AF_INET;
+      sin.sin_addr = *(struct in_addr *) addr_bytes->c_str();
+      sin.sin_port = htons(port);
+      *sa = g_sockaddr_inet_new2(&sin);
+    }
+  else if (addr_bytes->length() == 16)
+    {
+      /* ipv6 */
+      struct sockaddr_in6 sin6 = {0};
+      sin6.sin6_family = AF_INET6;
+      sin6.sin6_addr = *(struct in6_addr *) addr_bytes->c_str();
+      sin6.sin6_port = htons(port);
+      *sa = g_sockaddr_inet6_new2(&sin6);
+    }
+}
+
+void
 syslogng::grpc::otel::ProtobufParser::parse_syslog_ng_tags(LogMessage *msg, const std::string &tags_as_str)
 {
   ListScanner list_scanner;
@@ -1235,6 +1326,14 @@ syslogng::grpc::otel::ProtobufParser::store_syslog_ng(LogMessage *msg, const Log
       else if (key.compare("m") == 0)
         {
           set_syslog_ng_macros(msg, value);
+        }
+      else if (key.compare("sa") == 0)
+        {
+          set_syslog_ng_address(msg, &msg->saddr, value);
+        }
+      else if (key.compare("da") == 0)
+        {
+          set_syslog_ng_address(msg, &msg->daddr, value);
         }
       else
         {

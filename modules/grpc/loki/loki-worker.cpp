@@ -77,6 +77,11 @@ DestinationWorker::init()
 
   args.SetInt(GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS, 1);
 
+  for (auto nv : owner->int_extra_channel_args)
+    args.SetInt(nv.first, nv.second);
+  for (auto nv : owner->string_extra_channel_args)
+    args.SetString(nv.first, nv.second);
+
   auto credentials = owner->credentials_builder.build();
   if (!credentials)
     {
@@ -156,7 +161,10 @@ DestinationWorker::set_labels(LogMessage *msg)
         formatted_labels << ", ";
 
       log_template_format(label.value, msg, &options, buf);
+
+      g_string_truncate(sanitized_value, 0);
       append_unsafe_utf8_as_escaped_binary(sanitized_value, buf->str, -1, "\"");
+
       formatted_labels << label.name << "=\"" << sanitized_value->str << "\"";
 
       comma_needed = true;
@@ -179,7 +187,7 @@ DestinationWorker::set_timestamp(logproto::EntryAdapter *entry, LogMessage *msg)
     }
 
   UnixTime *time = &msg->timestamps[owner->timestamp];
-  timeval tv{time->ut_sec, time->ut_usec};
+  struct timeval tv = timeval_from_unix_time(time);
   *entry->mutable_timestamp() = google::protobuf::util::TimeUtil::TimevalToTimestamp(tv);
 }
 
@@ -213,6 +221,8 @@ DestinationWorker::insert(LogMessage *msg)
 LogThreadedResult
 DestinationWorker::flush(LogThreadedFlushMode mode)
 {
+  DestinationDriver *owner = this->get_owner();
+
   if (this->super->super.batch_size == 0)
     return LTR_SUCCESS;
 
@@ -220,7 +230,12 @@ DestinationWorker::flush(LogThreadedFlushMode mode)
   logproto::PushResponse response{};
 
   ::grpc::ClientContext ctx;
+
+  if (!owner->tenant_id.empty())
+    ctx.AddMetadata("x-scope-orgid", owner->tenant_id);
+
   ::grpc::Status status = this->stub->Push(&ctx, this->current_batch, &response);
+  this->get_owner()->metrics.insert_grpc_request_stats(status);
 
   if (!status.ok())
     {

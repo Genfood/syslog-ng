@@ -1,15 +1,10 @@
-if(ENABLE_OTEL AND NOT ENABLE_GRPC)
-  message(FATAL_ERROR "GRPC support is mandatory when the Otel modules are enabled.")
-endif()
-
-module_switch(ENABLE_OTEL "Enable Otel" ENABLE_GRPC)
-
-if(NOT ENABLE_OTEL OR NOT ENABLE_GRPC)
+if(NOT ENABLE_GRPC)
   return()
 endif()
 
 set(OTEL_CPP_SOURCES
   ${GRPC_CREDENTIALS_SOURCES}
+  ${GRPC_METRICS_SOURCES}
   otel-source.cpp
   otel-source.hpp
   otel-source.h
@@ -52,5 +47,10 @@ add_module(
   INCLUDES ${PROJECT_SOURCE_DIR}/modules/grpc
   SOURCES ${OTEL_SOURCES}
 )
+
+set_target_properties(otel PROPERTIES INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${CMAKE_INSTALL_PREFIX}/lib/syslog-ng")
+
+add_subdirectory(filterx)
+target_link_libraries(otel PRIVATE otel_filterx_logrecord_cpp)
 
 add_test_subdirectory(tests)

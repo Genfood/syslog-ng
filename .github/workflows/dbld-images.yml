@@ -29,8 +29,7 @@ jobs:
     strategy:
       matrix:
         image:
-          - centos-7
-          - fedora-37
+          - fedora-39
           - debian-bullseye
           - debian-bookworm
           - debian-buster
@@ -39,6 +38,7 @@ jobs:
           - ubuntu-focal
           - ubuntu-jammy
           - ubuntu-lunar
+          - ubuntu-mantic
           - devshell
           - kira
           - tarball

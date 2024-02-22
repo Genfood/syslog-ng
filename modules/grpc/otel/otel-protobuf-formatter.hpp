@@ -23,6 +23,8 @@
 #ifndef OTEL_PROTOBUF_FORMATTER_HPP
 #define OTEL_PROTOBUF_FORMATTER_HPP
 
+#include "syslog-ng.h"
+
 #include "compat/cpp-start.h"
 #include "logmsg/logmsg.h"
 #include "value-pairs/value-pairs.h"
@@ -51,6 +53,7 @@ using google::protobuf::RepeatedPtrField;
 using opentelemetry::proto::resource::v1::Resource;
 using opentelemetry::proto::common::v1::InstrumentationScope;
 using opentelemetry::proto::common::v1::KeyValue;
+using opentelemetry::proto::common::v1::KeyValueList;
 using opentelemetry::proto::logs::v1::LogRecord;
 using opentelemetry::proto::metrics::v1::Metric;
 using opentelemetry::proto::metrics::v1::Gauge;
@@ -103,6 +106,7 @@ private:
   /* syslog-ng */
   void set_syslog_ng_nv_pairs(LogMessage *msg, LogRecord &log_record);
   void set_syslog_ng_macros(LogMessage *msg, LogRecord &log_record);
+  void set_syslog_ng_addresses(LogMessage *msg, LogRecord &log_record);
 
 private:
   GlobalConfig *cfg;
@@ -112,6 +116,8 @@ private:
     LogTemplateOptions template_options;
     LogTemplateEvalOptions template_eval_options;
   } syslog_ng;
+
+  void set_syslog_ng_address_attrs(GSockAddr *sa, KeyValueList *address_attrs, bool include_port);
 };
 
 }

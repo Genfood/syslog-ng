@@ -107,12 +107,20 @@ DestinationDriver::init()
   else
     log_threaded_dest_driver_set_worker_partition_key_ref(&this->super->super.super.super, worker_partition_key);
 
-  return log_threaded_dest_driver_init_method(&this->super->super.super.super.super);
+  if (!log_threaded_dest_driver_init_method(&this->super->super.super.super.super))
+    return false;
+
+  StatsClusterKeyBuilder *kb = stats_cluster_key_builder_new();
+  this->format_stats_key(kb);
+  this->metrics.init(kb, log_pipe_is_internal(&this->super->super.super.super.super) ? STATS_LEVEL3 : STATS_LEVEL1);
+
+  return true;
 }
 
 bool
 DestinationDriver::deinit()
 {
+  this->metrics.deinit();
   return log_threaded_dest_driver_deinit_method(&this->super->super.super.super.super);
 }
 
@@ -204,6 +212,13 @@ loki_dd_set_timestamp(LogDriver *d, const gchar *t)
 }
 
 void
+loki_dd_set_tenant_id(LogDriver *d, const gchar *tid)
+{
+  LokiDestDriver *self = (LokiDestDriver *) d;
+  return self->cpp->set_tenant_id(tid);
+}
+
+void
 loki_dd_set_keepalive_time(LogDriver *d, gint t)
 {
   LokiDestDriver *self = (LokiDestDriver *) d;
@@ -222,6 +237,20 @@ loki_dd_set_keepalive_max_pings(LogDriver *d, gint p)
 {
   LokiDestDriver *self = (LokiDestDriver *) d;
   self->cpp->set_keepalive_max_pings(p);
+}
+
+void
+loki_dd_add_int_channel_arg(LogDriver *d, const gchar *name, glong value)
+{
+  LokiDestDriver *self = (LokiDestDriver *) d;
+  self->cpp->add_extra_channel_arg(name, value);
+}
+
+void
+loki_dd_add_string_channel_arg(LogDriver *d, const gchar *name, const gchar *value)
+{
+  LokiDestDriver *self = (LokiDestDriver *) d;
+  self->cpp->add_extra_channel_arg(name, value);
 }
 
 LogTemplateOptions *

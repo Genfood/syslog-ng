@@ -25,6 +25,7 @@
 #include "compat/cpp-start.h"
 #include "logmsg/type-hinting.h"
 #include "value-pairs/value-pairs.h"
+#include "scanner/list-scanner/list-scanner.h"
 #include "compat/cpp-end.h"
 
 #include <syslog.h>
@@ -113,7 +114,7 @@ _get_bool(LogMessage *msg, const gchar *name)
     return false;
 
   gboolean b = false;
-  if (!type_cast_to_boolean(value, &b, NULL))
+  if (!type_cast_to_boolean(value, len, &b, NULL))
     return false;
 
   return b;
@@ -130,7 +131,7 @@ _get_double(LogMessage *msg, const gchar *name)
     return 0;
 
   gdouble d = 0;
-  if (!type_cast_to_double(value, &d, NULL))
+  if (!type_cast_to_double(value, len, &d, NULL))
     return 0;
 
   return d;
@@ -195,7 +196,7 @@ _set_AnyValue(const gchar *value, gssize len, LogMessageValueType type, AnyValue
     case LM_VT_BOOLEAN:
     {
       gboolean b = FALSE;
-      if (!type_cast_to_boolean(value, &b, &error))
+      if (!type_cast_to_boolean(value, len, &b, &error))
         {
           msg_error("OpenTelemetry: Cannot parse boolean value, falling back to FALSE",
                     evt_tag_str("name", name_for_error_log),
@@ -209,7 +210,7 @@ _set_AnyValue(const gchar *value, gssize len, LogMessageValueType type, AnyValue
     case LM_VT_DOUBLE:
     {
       gdouble d = 0;
-      if (!type_cast_to_double(value, &d, &error))
+      if (!type_cast_to_double(value, len, &d, &error))
         {
           msg_error("OpenTelemetry: Cannot parse double value, falling back to 0",
                     evt_tag_str("name", name_for_error_log),
@@ -223,7 +224,7 @@ _set_AnyValue(const gchar *value, gssize len, LogMessageValueType type, AnyValue
     case LM_VT_INTEGER:
     {
       gint64 ll = 0;
-      if (!type_cast_to_int64(value, &ll, &error))
+      if (!type_cast_to_int64(value, len, &ll, &error))
         {
           msg_error("OpenTelemetry: Cannot parse integer value, falling back to 0",
                     evt_tag_str("name", name_for_error_log),
@@ -232,6 +233,21 @@ _set_AnyValue(const gchar *value, gssize len, LogMessageValueType type, AnyValue
           g_error_free(error);
         }
       any_value->set_int_value(ll);
+      break;
+    }
+    case LM_VT_LIST:
+    {
+      ArrayValue *array = any_value->mutable_array_value();
+
+      ListScanner scanner;
+      list_scanner_init(&scanner);
+      list_scanner_input_string(&scanner, value, len);
+      while (list_scanner_scan_next(&scanner))
+        {
+          array->add_values()->set_string_value(list_scanner_get_current_value(&scanner),
+                                                list_scanner_get_current_value_len(&scanner));
+        }
+      list_scanner_deinit(&scanner);
       break;
     }
     case LM_VT_STRING:
@@ -516,6 +532,48 @@ ProtobufFormatter::set_syslog_ng_nv_pairs(LogMessage *msg, LogRecord &log_record
 }
 
 void
+ProtobufFormatter::set_syslog_ng_address_attrs(GSockAddr *sa, KeyValueList *address_attrs, bool include_port)
+{
+  gchar addr_buf[32];
+  gsize addr_len;
+
+  if (!g_sockaddr_get_address(sa, (guint8 *) addr_buf, sizeof(addr_buf), &addr_len))
+    return;
+
+  KeyValue *addr = address_attrs->add_values();
+  addr->set_key("addr");
+  addr->mutable_value()->set_bytes_value(addr_buf, addr_len);
+
+  if (include_port)
+    {
+      KeyValue *port = address_attrs->add_values();
+      port->set_key("port");
+      port->mutable_value()->set_int_value(g_sockaddr_get_port(sa));
+    }
+}
+
+void
+ProtobufFormatter::set_syslog_ng_addresses(LogMessage *msg, LogRecord &log_record)
+{
+  /* source address */
+
+  if (msg->saddr)
+    {
+      KeyValue *sa = log_record.add_attributes();
+      sa->set_key("sa");
+      set_syslog_ng_address_attrs(msg->saddr, sa->mutable_value()->mutable_kvlist_value(), false);
+    }
+
+  if (msg->daddr)
+    {
+      /* dest address */
+      KeyValue *da = log_record.add_attributes();
+      da->set_key("da");
+      set_syslog_ng_address_attrs(msg->daddr, da->mutable_value()->mutable_kvlist_value(), true);
+    }
+}
+
+void
 ProtobufFormatter::set_syslog_ng_macros(LogMessage *msg, LogRecord &log_record)
 {
   /*
@@ -557,6 +615,7 @@ ProtobufFormatter::format_syslog_ng(LogMessage *msg, LogRecord &log_record)
 
   set_syslog_ng_nv_pairs(msg, log_record);
   set_syslog_ng_macros(msg, log_record);
+  set_syslog_ng_addresses(msg, log_record);
 }
 
 void
@@ -589,7 +648,7 @@ ProtobufFormatter::add_exemplars(LogMessage *msg, std::string &key_buffer, Repea
       if (type == LM_VT_INTEGER)
         {
           gint64 ll = 0;
-          if (!type_cast_to_int64(value, &ll, &error))
+          if (!type_cast_to_int64(value, len, &ll, &error))
             {
               msg_error("OpenTelemetry: Cannot parse integer value, falling back to 0",
                         evt_tag_str("name", key_buffer.c_str()),
@@ -602,7 +661,7 @@ ProtobufFormatter::add_exemplars(LogMessage *msg, std::string &key_buffer, Repea
       else if (type == LM_VT_DOUBLE)
         {
           gdouble d = 0;
-          if (!type_cast_to_double(value, &d, &error))
+          if (!type_cast_to_double(value, len, &d, &error))
             {
               msg_error("OpenTelemetry: Cannot parse double value, falling back to 0",
                         evt_tag_str("name", key_buffer.c_str()),
@@ -675,7 +734,7 @@ ProtobufFormatter::add_number_data_points(LogMessage *msg, const char *prefix,
       if (type == LM_VT_INTEGER)
         {
           gint64 ll = 0;
-          if (!type_cast_to_int64(value, &ll, &error))
+          if (!type_cast_to_int64(value, len, &ll, &error))
             {
               msg_error("OpenTelemetry: Cannot parse integer value, falling back to 0",
                         evt_tag_str("name", key_buffer.c_str()),
@@ -688,7 +747,7 @@ ProtobufFormatter::add_number_data_points(LogMessage *msg, const char *prefix,
       else if (type == LM_VT_DOUBLE)
         {
           gdouble d = 0;
-          if (!type_cast_to_double(value, &d, &error))
+          if (!type_cast_to_double(value, len, &d, &error))
             {
               msg_error("OpenTelemetry: Cannot parse double value, falling back to 0",
                         evt_tag_str("name", key_buffer.c_str()),

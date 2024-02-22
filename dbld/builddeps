@@ -16,9 +16,7 @@ function workaround_rpm_repos() {
         fedora)
             # Workaround for often getting 503 from mirrors.fedoraproject.org.
             sed -i -e "/baseurl/c\baseurl=${MIRROR_URL}/releases/\$releasever/Everything/\$basearch/os/" /etc/yum.repos.d/fedora.repo
-            sed -i -e "/baseurl/c\baseurl=${MIRROR_URL}/releases/\$releasever/Modular/\$basearch/os/" /etc/yum.repos.d/fedora-modular.repo
             sed -i -e "/baseurl/c\baseurl=${MIRROR_URL}/updates/\$releasever/Everything/\$basearch/" /etc/yum.repos.d/fedora-updates.repo
-            sed -i -e "/baseurl/c\baseurl=${MIRROR_URL}/updates/\$releasever/Modular/\$basearch/" /etc/yum.repos.d/fedora-updates-modular.repo
             # we don't need h264 codecs
             sed -i -e "/enabled/c\enabled=0" /etc/yum.repos.d/fedora-cisco-openh264.repo
             ;;
@@ -68,17 +66,6 @@ function install_criterion() {
     ldconfig
     rm -rf /tmp/criterion.tar.bz2 /tmp/criterion-v${CRITERION_VERSION}
 
-}
-
-function install_gosu() {
-    GOSU_VERSION=1.10
-    ARCHITECTURE=$1
-    cat $DBLD_DIR/images/gosu.pubkey | gpg --import
-    download_target "https://github.com/tianon/gosu/releases/download/${GOSU_VERSION}/gosu-${ARCHITECTURE}" /usr/local/bin/gosu
-    download_target "https://github.com/tianon/gosu/releases/download/${GOSU_VERSION}/gosu-${ARCHITECTURE}.asc" /usr/local/bin/gosu.asc
-    gpg --verify /usr/local/bin/gosu.asc
-    rm /usr/local/bin/gosu.asc
-    chmod +x /usr/local/bin/gosu
 }
 
 function set_jvm_paths() {

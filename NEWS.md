@@ -1,270 +1,415 @@
-4.4.0
+4.6.0
 =====
 
-Read Axoflow's [blog post](https://axoflow.com/axosyslog-release-4-4/) for more details.
+Read Axoflow's [blog post](https://axoflow.com/axosyslog-release-4-6/) for more details.
 You can read more about the new features in the AxoSyslog [documentation](https://axoflow.com/docs/axosyslog-core/).
 
 
 ## Highlights
 
-### Sending messages between syslog-ng instances via OTLP/gRPC
+### Forwarding logs to Google BigQuery
 
-The `syslog-ng-otlp()` source and destination helps to transfer the internal representation
-of a log message between syslog-ng instances. In contrary to the `syslog-ng()` (`ewmm()`)
-drivers, `syslog-ng-otlp()` does not transfer the messages on simple TCP connections, but uses
-the OpenTelemetry protocol to do so.
+The `bigquery()` destination inserts logs to a Google BigQuery table via the
+high-performance gRPC API.
 
-It is easily scalable (`workers()` option), uses built-in application layer acknowledgement,
-out of the box supports google service authentication (ADC or ALTS), and gives the possibility
-of better load balancing.
+Authentication is done via [Application Default Credentials](https://cloud.google.com/docs/authentication/provide-credentials-adc).
 
-The performance is currently similar to `ewmm()` (OTLP is ~30% quicker) but there is a source
-side limitation, which will be optimized. We measured 200-300% performance improvement with a
-PoC optimized code using multiple threads, so stay tuned.
+You can locate your BigQuery table with the `project()` `dataset()` and `table()`
+options.
 
-Note: The `syslog-ng-otlp()` source is only an alias to the `opentelemetry()` source.
-This is useful for not needing to open different ports for the syslog-ng messages and other
-OpenTelemetry messages. The syslog-ng messages are marked with a `@syslog-ng` scope name and
-the current syslog-ng version as the scope version. Both sources will handle the incoming
-syslog-ng messages as syslog-ng messages, and all other messages as simple OpenTelemetry
-messages.
-([#4564](https://github.com/syslog-ng/syslog-ng/pull/4564))
+There are two ways to configure your table's schema.
+  - You can set the columns and their respective type and template with the
+    `schema()` option. The available types are: `STRING`, `BYTES`, `INTEGER`,
+    `FLOAT`, `BOOLEAN`, `TIMESTAMP`, `DATE`, `TIME`, `DATETIME`, `JSON`,
+    `NUMERIC`, `BIGNUMERIC`, `GEOGRAPHY`, `RECORD`, `INTERVAL`.
+  - Alternatively you can import a `.proto` file with the `protobuf-schema()` option,
+    and map the templates for each column.
 
-### Grafana Loki destination
+The performance can be further improved with the `workers()`, `batch-lines()`,
+`batch-bytes()`, `batch-timeout()` and `compression()` options. By default the
+messages are sent with one worker, one message per batch and without compression.
 
-The `loki()` destination sends messages to Grafana Loki using gRPC.
-The message format conforms to the documented HTTP endpoint:
-https://grafana.com/docs/loki/latest/reference/api/#push-log-entries-to-loki
+Keepalive can be configured with the `keep-alive()` block and its `time()`,
+`timeout()`  and `max-pings-without-data()` options.
 
 Example config:
 ```
-loki(
-    url("localhost:9096")
-    labels(
-        "app" => "$PROGRAM",
-        "host" => "$HOST",
+bigquery(
+    project("test-project")
+    dataset("test-dataset")
+    table("test-table")
+    workers(8)
+
+    schema(
+        "message" => "$MESSAGE"
+        "app" STRING => "$PROGRAM"
+        "host" STRING => "$HOST"
+        "pid" INTEGER => int("$PID")
     )
 
-    workers(16)
-    batch-timeout(10000)
-    batch-lines(1000)
+    on-error("drop-property")
+
+    # or alternatively instead of schema():
+    # protobuf-schema("/tmp/test.proto"
+    #                 => "$MESSAGE", "$PROGRAM", "$HOST", "$PID")
+
+    # keep-alive(time(20000) timeout(10000) max-pings-without-data(0))
 );
 ```
 
-Loki requires monotonic timestamps within the same label-set, which makes
-it difficult to use the original message timestamp without the possibility
-of message loss. In case the monotonic property is violated, Loki discards
-the problematic messages with an error. The source of the timestamps can be
-configured with the `timestamp()` option (`current`, `received`, `msg`).
-
-([#4631](https://github.com/syslog-ng/syslog-ng/pull/4631))
-
-### S3 destination
-
-The `s3()` destination stores log messages in S3 objects.
-
-Minimal config:
+Example `.proto` schema:
 ```
-s3(
-    url("http://localhost:9000")
-    bucket("syslog-ng")
-    access-key("my-access-key")
-    secret-key("my-secret-key")
-    object-key("${HOST}/my-logs")
-    template("${MESSAGE}\n")
-);
+syntax = "proto2";
+​
+message CustomRecord {
+  optional string message = 1;
+  optional string app = 2;
+  optional string host = 3;
+  optional int64 pid = 4;
+}
 ```
 
-#### Compression
-
-Setting `compression(yes)` enables gzip compression, and implicitly adds a `.gz` suffix to the
-created object's key. Use the `compresslevel()` options to set the level of compression (0-9).
-
-#### Rotation based on object size
-
-The `max-object-size()` option configures syslog-ng to finish an object if it reaches a certain
-size. syslog-ng will append an index (`"-1"`, `"-2"`, ...) to the end of the object key when
-starting a new object after rotation.
-
-#### Rotation based on timestamp
-
-The `object-key-timestamp()` option can be used to set a datetime related template, which gets
-appended to the end of the object (e.g. `"${R_MONTH_ABBREV}${R_DAY}"` => `"-Sep25"`). When a log
-message arrives with a newer timestamp template resolution, the previous timestamped object gets
-finised and a new one is started with the new timestamp. Backfill messages do not reopen and append
-the old object, but starts a new object with the key having an index appended to the old object.
-
-#### Rotation based on timeout
-
-The `flush-grace-period()` option sets the number of minutes to wait for new messages to arrive to
-objects, if the timeout expires the object is finished, and a new message will start a new with
-an index appended.
-
-#### Upload options
-
-The objects are uploaded with the multipart upload API. Chunks are composed locally. When a chunk
-reaches a certain size (by default 5 MiB), the chunk is uploaded. When an object is finished, the
-multipart upload gets completed and the chunks are merged by S3.
-
-Upload parameters can be configured with the `chunk-size()`, `upload-threads()` and
-`max-pending-uploads()` options.
+([#4733](https://github.com/syslog-ng/syslog-ng/pull/4733))
+([#4770](https://github.com/syslog-ng/syslog-ng/pull/4770))
+([#4756](https://github.com/syslog-ng/syslog-ng/pull/4756))
 
 
-#### Additional options
+### Collecting native macOS system logs
 
-Additional options include `region()`, `storage-class()` and `canned-acl()`.
+Two new sources have been added on macOS: `darwin-oslog()`, `darwin-oslog-stream()`.
+`darwin-oslog()` replaced the earlier file source based solution with a native OSLog
+framework based one, and is automatically used in the `system()` source on darwin
+platform if the **darwinosl** plugin is presented.
 
-([#4624](https://github.com/syslog-ng/syslog-ng/pull/4624))
+This plugin is available only on macOS 10.15 Catalina and above, the first version
+that has the OSLog API.
+
+#### `darwin-oslog()`
+
+This is a native OSLog Framework based source to read logs from the local store of
+the unified logging system on darwin OSes.
+For more info, see https://developer.apple.com/documentation/oslog?language=objc
+
+The following parameters can be used for customization:
+  - `filter-predicate()`
+      - string value, which can be used to filter the log messages natively
+      - default value: `(eventType == 'logEvent' || eventType == 'lossEvent' || eventType == 'stateEvent' || eventType == 'userActionEvent') && (logType != 'debug')`
+      - for more details, see
+          - `man log`
+          - https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Predicates/Articles/pSyntax.html
+  - `go-reverse()`
+      - boolean value, setting to `yes` will provide a reverse-ordered log list
+        (from latest to oldest)
+      - default value: `no`
+  - `do-not-use-bookmark()`
+      - boolean value, setting to `yes` will prevent syslog-ng from continuing to
+        feed the logs from the last remembered position after a (re-)start, which means,
+        depending on the other settings, the feed will always start from the end/beginning
+        of the available log list
+      - default value: `no`, which means syslog-ng will attempt to continue feeding from
+        the last remembered log position after a (re-)start
+  - `max-bookmark-distance()`
+      - integer value, maximum distance in seconds that far an earlier bookmark can point
+        backward, e.g. if syslog-ng was stopped for 10 minutes and max-bookmark-distance
+        is set to 60 then syslog-ng will start feeding the logs only from the last 60
+        seconds at startup, 9 minutes of logs 'will be lost'
+      - default value: `0`, which means no limit
+  - `read-old-records()`
+      - boolean value, controls if syslog-ng should start reading logs from the oldest
+        available at first start (or if no bookmark can be found)
+      - default value: `no`
+  - `fetch-delay()`
+      - integer value, controls how much time syslog-ng should wait between reading/sending
+        log messages, this is a fraction of a second, where wait_time = 1 second / n, so,
+        e.g. n=1 means that only about 1 log will be read and sent in each second,
+        and n=1 000 000 means only 1 microsecond (the allowed minimum value now!)
+        will be the delay between read/write attempts
+      - Use with care, though lower delay time can increase log feed performance, at the
+        same time could lead to a heavy system load!
+      - default value: `10 000`
+  - `fetch-retry-delay()`
+      - integer value, controls how many seconds syslog-ng will wait before a repeated
+        attempt to read/send once it's out of available logs
+      - default value: `1`
+  - `log-fetch-limit()`
+      - **Warning**: _This option is now disabled due to an OSLog API bug_
+        _(https://openradar.appspot.com/radar?id=5597032077066240), once it's fixed it_
+        _will be enabled again_
+      - integer value, that limits the number of logs syslog-ng will send in one run
+      - default value: `0`, which means no limit
+
+NOTE: the persistent OSLog store is not infinite, depending on your system setting usually,
+it keeps about 7 days of logs on disk, so it could happen that the above options cannot
+operate the way you expect, e.g. if syslog-ng was stopped for about more then a week it
+could happen that will not be able to restart from the last saved bookmark position
+(as that might not be presented in the persistent log anymore)
+
+#### `darwin-oslog-stream()`
+
+This is a wrapper around the OS command line "log stream" command that can provide a live
+log stream feed. Unlike in the case of `darwin-oslog()` the live stream can contain
+non-persistent log events too, so take care, there might be a huge number of log events
+every second that could put an unusual load on the device running syslog-ng with this source.
+Unfortunately, there's no public API to get the same programmatically, so this one is
+implemented using a program() source.
+
+Possible parameters:
+  - `params()`
+    - a string that can contain all the possible params the macOS `log` tool can accept
+    - see `log --help stream` for full reference, and `man log` for more details
+    - IMPORTANT: the parameter `--style` is used internally (defaults to `ndjson`), so it
+      cannot be overridden, please use other sysylog-ng features (templates, rewrite rules, etc.)
+      for final output formatting
+    - default value: `--type log --type trace --level info --level debug`,
+      you can use \``def-osl-stream-params`\` for referencing it if you wish to keep the
+      defaults when you add your own
+
+([#4423](https://github.com/syslog-ng/syslog-ng/pull/4423))
+
+### Collecting qBittorrent logs
+
+The new `qbittorrent()` source, reads qBittorrent logs from its log file output.
+
+Example minimal config:
+```
+source s_qbittorrent {
+  qbittorrent(
+    dir("/path/to/my/qbittorrent/root/log/dir")
+  );
+};
+```
+
+The root dir of the qBittorrent logs can be found in the
+"Tools" / "Preferences" / "Behavior" / "Log file" / "Save path" field.
+
+As the `qbittorrent()` source is based on a `file()` source, all of the `file()`
+source options are applicable, too.
+
+([#4760](https://github.com/syslog-ng/syslog-ng/pull/4760))
+
+### Collecting pihole FTL logs
+
+The new `pihole-ftl()` source reads pihole FTL (Faster Than Light) logs, which
+are usually accessible in the "Tools" / "Pi-hole diagnosis" menu.
+
+Example minimal config:
+```
+source s_pihole_ftl {
+  pihole-ftl();
+};
+```
+
+By default it reads the `/var/log/pihole/FTL.log` file.
+You can change the root dir of Pi-hole's logs with the `dir()` option,
+where the `FTL.log` file can be found.
+
+As the `pihole-ftl()` source is based on a `file()` source, all of the
+`file()` source options are applicable, too.
+
+([#4760](https://github.com/syslog-ng/syslog-ng/pull/4760))
+
+### Parsing Windows Eventlog XMLs
+
+The new `windows-eventlog-xml-parser()` introduces parsing support for Windows Eventlog XMLs.
+
+Its parameters are the same as the `xml()` parser.
+
+Example config:
+```
+parser p_win {
+    windows-eventlog-xml-parser(prefix(".winlog."));
+};
+```
+
+([#4793](https://github.com/syslog-ng/syslog-ng/pull/4793))
 
 
 ## Features
 
-  * `http()`: Added compression ability for use with metered egress/ingress
+  * `cloud-auth()`: Added support for `user-managed-service-account()` `gcp()` auth method.
 
-    The new features can be accessed with the following options:
-     * `accept-encoding()` for requesting the compression of HTTP responses form the server.
-       (These are currently not used by syslog-ng, but they still contribute to network traffic.)
-       The available options are `identity` (for no compression), `gzip` or `deflate`.
-       If you want the driver to accept multiple compression types, you can list them separated by
-       commas inside the quotation mark, or write `all`, if you want to enable all available compression types.
-     * `content-compression()` for compressing messages sent by syslog-ng. The available options are
-       `identity` for no compression, `gzip`, or `deflate`.
+    This authentication method can be used on VMs in GCP to use the linked service.
 
-    Below you can see a configuration example:
+    Example minimal config, which tries to use the "default" service account:
     ```
-    destination d_http_compressed{
-      http(url("127.0.0.1:80"), content-compression("deflate"), accept-encoding("all"));
+    cloud-auth(
+      gcp(
+        user-managed-service-account()
+      )
+    )
+    ```
+
+    Full config:
+    ```
+    cloud-auth(
+      gcp(
+        user-managed-service-account(
+          name("alltilla@syslog-ng-test-project.iam.gserviceaccount.com")
+          metadata-url("my-custom-metadata-server:8080")
+        )
+      )
+    )
+    ```
+
+    This authentication method is extremely useful with syslog-ng's `google-pubsub()` destination,
+    when it is running on VMs in GCP, for example:
+    ```
+    destination {
+      google-pubsub(
+        project("syslog-ng-test-project")
+        topic("syslog-ng-test-topic")
+        auth(user-managed-service-account())
+      );
     };
     ```
-    ([#4137](https://github.com/syslog-ng/syslog-ng/pull/4137))
 
-  * `opensearch`: Added a new destination.
+    For more info about this GCP authentication method, see:
+     * https://cloud.google.com/compute/docs/access/authenticate-workloads#curl
+     * https://cloud.google.com/compute/docs/access/create-enable-service-accounts-for-instances
+    ([#4755](https://github.com/syslog-ng/syslog-ng/pull/4755))
 
-    It is similar to `elasticsearch-http()`, with the difference that it does not have the `type()`
-    option, which is deprecated and advised not to use.
-    ([#4560](https://github.com/syslog-ng/syslog-ng/pull/4560))
+  * `opentelemetry()`, `syslog-ng-otlp()` sources: Added `workers()` option.
 
-  * Added metrics for message delays: a new metric is introduced that measures the
-    delay the messages accumulate while waiting to be delivered by syslog-ng.
-    The measurement is sampled, e.g. syslog-ng would take the very first message
-    in every second and expose its delay as a value of the new metric.
+    This feature enables processing the OTLP messages on multiple threads,
+    which can greatly improve the performance.
+    By default it is set to `workers(1)`.
+    ([#4774](https://github.com/syslog-ng/syslog-ng/pull/4774))
 
-    There are two new metrics:
-      * syslogng_output_event_delay_sample_seconds -- contains the latency of
-        outgoing messages
-      * syslogng_output_event_delay_sample_age_seconds -- contains the age of the last
-        measurement, relative to the current time.
-    ([#4565](https://github.com/syslog-ng/syslog-ng/pull/4565))
+  * `opentelemetry()`, `syslog-ng-otlp()` destinations: Added `compression()` option.
 
-  * `metrics-probe`: Added dynamic labelling support via name-value pairs
+    This boolean option can be used to enable gzip compression in gRPC requests.
+    By default it is set to `compression(no)`.
+    ([#4765](https://github.com/syslog-ng/syslog-ng/pull/4765))
 
-    You can use all value-pairs options, like `key()`, `rekey()`, `pair()` or `scope()`, etc...
+  * `opentelemetry()`, `syslog-ng-otlp()` destinations: Added `batch-bytes()` option.
 
-    Example:
+    This option lets the user limit the bytes size of a batch. As there is a
+    default 4 MiB batch limit by OTLP, it is necessary to keep the batch size
+    smaller, but it would be hard to configure without this option.
+
+    Please note that the batch can be at most 1 message larger than the set
+    limit, so consider this when setting this value.
+
+    The default value is 4 MB, which is a bit below 4 MiB.
+
+    The calculation of the batch size is done before compression, which is
+    the same as the limit is calculated on the server.
+
+    Example config:
     ```
-    metrics-probe(
-      key("foo")
-      labels(
-        "static-label" => "bar"
-        key(".my_prefix.*" rekey(shift-levels(1)))
-      )
-    );
+      syslog-ng-otlp(
+        url("localhost:12345")
+        workers(16)
+        log-fifo-size(1000000)
+
+        batch-timeout(5000) # ms
+        batch-lines(1000000) # Huge limit, batch-bytes() will limit us sooner
+
+        batch-bytes(1MB) # closes and flushes the batch after the last message pushed it above the 1 MB limit
+        # not setting batch-bytes() defaults to 4 MB, which is a bit below the default 4 MiB limit
+      );
     ```
+    ([#4772](https://github.com/syslog-ng/syslog-ng/pull/4772))
+
+  * `opentelemetry()`, `syslog-ng-otlp()`: Added syslog-ng style list support.
+    ([#4794](https://github.com/syslog-ng/syslog-ng/pull/4794))
+
+  * `$(tag)` template function: expose bit-like tags that are set on messages.
+
+    Syntax:
+        `$(tag <name-of-the-tag> <value-if-set> <value-if-unset>)`
+
+    Unless the value-if-set/unset arguments are specified `$(tag)` results in a
+    boolean type, expanding to "0" or "1" depending on whether the message has
+    the specified tag set.
+
+    If value-if-set/unset are present, `$(tag)` would return a string, picking the
+    second argument `<value-if-set>` if the message has `<tag>` and picking the
+    third argument `<value-if-unset>` if the message does not have `<tag>`
+    ([#4766](https://github.com/syslog-ng/syslog-ng/pull/4766))
+
+  * `set-severity()` support for aliases: widespread aliases to severity values
+    produced by various applications are added to set-severity().
+    ([#4763](https://github.com/syslog-ng/syslog-ng/pull/4763))
+
+  * `flags(seqnum-all)`: available in all destination drivers, this new flag
+    changes `$SEQNUM` behaviour, so that all messages get a sequence number, not
+    just local ones.  Previously syslog-ng followed the logic of the RFC5424
+    meta.sequenceId structured data element, e.g.  only local messages were to
+    get a sequence number, forwarded messages retained their original sequenceId
+    that we could potentially receive ourselves.
+
+    For example, this destination would include the meta.sequenceId SDATA
+    element even for non-local logs and increment that value by every message
+    transmitted:
+
+      `destination { syslog("127.0.0.1" port(2001) flags(seqnum-all)); };`
+
+    This generates a message like this on the output, even if the message is
+    not locally generated (e.g. forwarded from another syslog sender):
+
     ```
-    syslogng_foo{static_label="bar",my_prefix_baz="almafa",my_prefix_foo="bar",my_prefix_nested_axo="flow"} 4
+      <13>1 2023-12-09T21:51:30+00:00 localhost sdff - - [meta sequenceId="1"] f sdf fsd
+      <13>1 2023-12-09T21:51:32+00:00 localhost sdff - - [meta sequenceId="2"] f sdf fsd
+      <13>1 2023-12-09T21:51:32+00:00 localhost sdff - - [meta sequenceId="3"] f sdf fsd
+      <13>1 2023-12-09T21:51:32+00:00 localhost sdff - - [meta sequenceId="4"] f sdf fsd
+      <13>1 2023-12-09T21:51:32+00:00 localhost sdff - - [meta sequenceId="5"] f sdf fsd
     ```
-    ([#4610](https://github.com/syslog-ng/syslog-ng/pull/4610))
+    ([#4745](https://github.com/syslog-ng/syslog-ng/pull/4745))
 
-  * `systemd-journal()`: Added support for enabling multiple systemd-journal() sources
-
-    Using multiple systemd-journal() sources are now possible as long as each source uses a unique
-    systemd namespace. The namespace can be configured with the `namespace()`` option, which has a
-    default value of `"*"`.
-    ([#4553](https://github.com/syslog-ng/syslog-ng/pull/4553))
-
-  * `stdout()`: added a new destination that allows you to write messages easily
-    to syslog-ng's stdout.
-    ([#4620](https://github.com/syslog-ng/syslog-ng/pull/4620))
-
-  * `network()`: Added `ignore-hostname-mismatch` as a new flag to `ssl-options()`.
-
-    By specifying `ignore-hostname-mismatch`, you can ignore the subject name of a
-    certificate during the validation process. This means that syslog-ng will
-    only check if the certificate itself is trusted by the current set of trust
-    anchors (e.g. trusted CAs) ignoring the mismatch between the targeted
-    hostname and the certificate subject.
-    ([#4628](https://github.com/syslog-ng/syslog-ng/pull/4628))
+  * `loggen`: improve loggen performance for synthetic workloads, so we can test
+    for example up to 650k msg/sec on a AMD Ryzen 7 Pro 6850U CPU.
+    ([#4476](https://github.com/syslog-ng/syslog-ng/pull/4476))
 
 
 ## Bugfixes
 
-  * `syslog-ng`: fix runtime `undefined symbol: random_choice_generator_parser'` when executing `syslog-ng -V` or
-    using an example plugin
-    ([#4615](https://github.com/syslog-ng/syslog-ng/pull/4615))
+  * `metrics-probe()`: Fixed not cleaning up dynamic labels for each message if no static labels are set.
+    ([#4750](https://github.com/syslog-ng/syslog-ng/pull/4750))
 
-  * Fix threaded destination crash during a configuration revert
+  * `regexp-parser()`: Fixed a bug, which stored some values incorrectly if `${MESSAGE}` was changed with a capture group.
+    ([#4759](https://github.com/syslog-ng/syslog-ng/pull/4759))
 
-    Threaded destinations that do not support the `workers()` option crashed while
-    syslog-ng was trying to revert to an old configuration.
-    ([#4588](https://github.com/syslog-ng/syslog-ng/pull/4588))
+  * `network()` source: fix marking originally valid utf-8 messages when `sanitize-utf8` is enabled
+    ([#4744](https://github.com/syslog-ng/syslog-ng/pull/4744))
 
-  * `redis()`: fix incrementing seq_num
-    ([#4588](https://github.com/syslog-ng/syslog-ng/pull/4588))
-
-  * `python()`: fix crash when using `Persist` or `LogTemplate` without global `python{}` code block in configuration
-    ([#4572](https://github.com/syslog-ng/syslog-ng/pull/4572))
-
-  * `mqtt()` destination: fix template option initialization
-    ([#4605](https://github.com/syslog-ng/syslog-ng/pull/4605))
-
-  * `opentelemetry`: Fixed error handling in case of insert failure.
-    ([#4583](https://github.com/syslog-ng/syslog-ng/pull/4583))
-
-  * pdbtool: add validation for types of `<value>` tags
-
-    In patterndb, you can add extra name-value pairs following a match with the tags.
-    But the actual value of these name-value pairs were never validated against their types,
-    meaning that an incorrect value could be set using this construct.
-    ([#4621](https://github.com/syslog-ng/syslog-ng/pull/4621))
-
-  * `grouping-by()`, `group-lines()`: Fixed a persist name generating error.
-    ([#4478](https://github.com/syslog-ng/syslog-ng/pull/4478))
-
+  * `python()`: Fixed a memory leak in `list` typed `LogMessage` values.
+    ([#4790](https://github.com/syslog-ng/syslog-ng/pull/4790))
 
 ## Packaging
 
-  * debian: Added tzdata-legacy to BuildDeps for recent debian versions.
+  * `VERSION` renamed to `VERSION.txt`: due to a name collision with C++ based
+    builds on MacOS, the file containing our version number was renamed to
+    VERSION.txt.
+    ([#4775](https://github.com/syslog-ng/syslog-ng/pull/4775))
 
-    In the recent debian packaging some of the timezone info files moved
-    to a new tzdata-legacy package from the standard tzdata package.
-    ([#4643](https://github.com/syslog-ng/syslog-ng/pull/4643))
+  * Added `gperf` as a build dependency.
+    ([#4763](https://github.com/syslog-ng/syslog-ng/pull/4763))
 
-  * rhel: `contrib/vim` has been removed from the source.
-    ([#4607](https://github.com/syslog-ng/syslog-ng/pull/4607))
+
+## Notes to developers
+
+  * `LogThreadedSourceDriver`: Added multi-worker API, which is a breaking change.
+
+    Check the Pull Request for inspiration on how to follow up these changes.
+    ([#4774](https://github.com/syslog-ng/syslog-ng/pull/4774))
 
 
 ## Other changes
 
-  * APT packages: Dropped support for Ubuntu Bionic.
-  ([#4648](https://github.com/syslog-ng/syslog-ng/pull/4648))
+  * `network()`/`syslog()` sources: support UTF-8 sanitization/validation of RFC 5424 and `no-parse` messages
 
-  * `vim`: Syntax highlight file is no longer packaged.
+    The `sanitize-utf8`, `validate-utf8` flags are now supported when parsing RFC 5424 messages or when parsing is disabled.
+    ([#4744](https://github.com/syslog-ng/syslog-ng/pull/4744))
 
-    vim syntax files where previously installed by the RedHat packages of syslog-ng
-    (but not the Debian ones). These files where sometime lagging behind, so in order
-    to provide a more up-to-date experience on all platforms, regardless of the
-    installation of the syslog-ng package, the vim syntax files have been moved to a
-    dedicated repository [syslog-ng/vim-syslog-ng](https://github.com/syslog-ng/vim-syslog-ng) that can be used using a plugin manager such as
-    [vim-plug](https://github.com/junegunn/vim-plug), [vim-pathogen](https://github.com/tpope/vim-pathogen) or [vundle](https://github.com/VundleVim/Vundle.vim).
-    ([#4607](https://github.com/syslog-ng/syslog-ng/pull/4607))
-
+  * APT packages: Added Ubuntu Mantic Minotaur.
+    ([#4737](https://github.com/syslog-ng/syslog-ng/pull/4737))
 
 ## syslog-ng Discord
 
 For a bit more interactive discussion, join our Discord server:
 
 [![Axoflow Discord Server](https://discordapp.com/api/guilds/1082023686028148877/widget.png?style=banner2)](https://discord.gg/E65kP9aZGm)
-
 
 ## Credits
 
@@ -277,5 +422,4 @@ of syslog-ng, contribute.
 
 We would like to thank the following people for their contribution:
 
-Alex Becker, Attila Szakacs, Balazs Scheidler, Bálint Horváth, Hofi,
-László Várady, Romain Tartière, Szilard Parrag
+Attila Szakacs, Balazs Scheidler, Hofi, László Várady, Romain Tartière

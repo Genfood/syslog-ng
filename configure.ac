@@ -47,7 +47,7 @@ LIBRABBITMQ_MIN_VERSION="0.5.3"
 LIBRDKAFKA_MIN_VERSION="1.1.0"
 IVYKIS_MIN_VERSION="0.36.1"
 IVYKIS_UPDATED_VERSION="0.39"
-JSON_C_MIN_VERSION="0.9"
+JSON_C_MIN_VERSION="0.13"
 PCRE2_MIN_VERSION="10.0"
 LMC_MIN_VERSION="1.0.0"
 LRMQ_MIN_VERSION="0.0.1"
@@ -245,6 +245,10 @@ AC_ARG_ENABLE(sun-streams,
               [  --enable-sun-streams    Enable support for Solaris /dev/log STREAMS device.]
               ,,enable_sun_streams="auto")
 
+AC_ARG_ENABLE(darwin-osl,
+              [  --enable-darwin-osl    Enable support for Darwin OS Log source. (default: auto)]
+              ,,enable_darwin_osl="auto")
+
 AC_ARG_ENABLE(openbsd-system-source,
               [  --enable-openbsd-system-source    Enable support for OpenBSD /dev/klog device.]
               ,,enable_openbsd_system_source="auto")
@@ -312,7 +316,7 @@ AC_ARG_WITH(libpaho-mqtt,
                             [use libpaho-mqtt library from (prefix) directory DIR]),,)
 
 AC_ARG_ENABLE(grpc,
-              [  --enable-grpc           Enable GRPC based driver support (OpenTelemetry) (default: auto)]
+              [  --enable-grpc           Enable GRPC based modules support (OpenTelemetry, Loki, BigQuery) (default: auto)]
               ,,enable_grpc="auto")
 
 AC_ARG_WITH(protoc,
@@ -451,14 +455,29 @@ patheval()
 dnl ***************************************************************************
 dnl Checks for programs.
 
+# Do not mix the used compilers or you might have to deal with further libtool issues
+# Currently syslog-ng and all modules can be compiled like
+#       | Comoiler |  C  | C++ | ObjC |
+#       -------------------------------
+#       |    gcc   |  x  |  x  |  -   |
+#       -------------------------------
+#       |   clang  |  x  |  x  |  x   |
+#       -------------------------------
+#       |    g++   | n/a |  x  | n/a  | (NOTE: g++ fails on C99 compilant test bellow)
+#       -------------------------------
+#
 AC_PROG_CC
 AC_PROG_CC_C99
 AM_PROG_CC_C_O
 if test "x$ac_cv_prog_cc_c99" = "xno"; then
-	AC_MSG_ERROR("C99 standard compliant C compiler required. Try GCC 3.x or later.")
+	AC_MSG_ERROR([C99 standard compliant C compiler required. Try GCC 3.x or later.])
 fi
+# Turned out that even the latest gcc has no proper support of the required ObjC version
+# Once gcc was able to compile our ObjC modules properly this could be reverted to AC_PROG_OBJC([$OBJC $CC])
+AC_PROG_OBJC([$OBJC clang])
 AC_PROG_YACC
 AM_PROG_LEX
+AM_MISSING_PROG([GPERF], [gperf])
 AC_PROG_MAKE_SET
 PKG_PROG_PKG_CONFIG
 LT_INIT([dlopen disable-static])
@@ -477,17 +496,6 @@ AM_CONDITIONAL([HAVE_PYTHON_INTERPRETER], [test "$PYTHON" != :])
 dnl ***************************************************************************
 dnl C++
 
-# Ok, here is the deal
-# clang cannot compile the current source, it has nultiple issues
-# replace it till not fixed them
-if test "x$CXX" = "xclang"; then
-        AC_MSG_ERROR(["clang cannot compile syslog-ng C++ sources, try using gcc instead (export CXX=gcc) for C++ compilation (NOTE: on macOS you need Homebrew gcc not the Apple one)"])
-elif test "x$CC" = "xclang"; then
-        CPP_COMPILER="gcc"
-        AC_MSG_WARN(["clang cannot compile syslog-ng C++ sources, switched to $CPP_COMPILER for C++ compilation (NOTE: on macOS you need Homebrew gcc not the Apple one)"])
-else
-        CPP_COMPILER="$CXX $CC"
-fi
 # This one is useful for checking the available compilers
 # AC_MSG_RESULT(gcc = $(which gcc) - g++ = $(which g++) - clang = $(which clang))
 # AC_MSG_RESULT(Paths: gcc = $(ls -Al $(which gcc)) - g++ = $(ls -Al $(which g++)) - clang = $(ls -Al $(which clang)))
@@ -629,9 +637,10 @@ dnl We are checking for the postive warning flag, as gcc handles the
 dnl -Wno-XXX version oddly, so if no other warnings are present, it is not
 dnl reported at all, causing it to be unusable for detection purposes.
 
-AX_CFLAGS_GCC_OPTION(-Winitializer-overrides,
-		     CFLAGS_INITIALIZER_OVERRIDES,
-		     CFLAGS_ADD="${CFLAGS_ADD} -Wno-initializer-overrides")
+AX_CFLAGS_GCC_OPTION(-Winitializer-overrides, CFLAGS_W_INITIALIZER_OVERRIDES, CFLAGS_W_NO_INITIALIZER_OVERRIDES="-Wno-initializer-overrides")
+AX_CFLAGS_GCC_OPTION(-Wold-style-declaration, CFLAGS_W_OLD_STYLE_DECLARATION)
+AC_SUBST(CFLAGS_W_NO_INITIALIZER_OVERRIDES)
+AC_SUBST(CFLAGS_W_OLD_STYLE_DECLARATION)
 
 dnl User supplied CFLAGS come last
 CFLAGS="${CFLAGS_ADD} ${ac_cv_env_CFLAGS_value}"
@@ -666,7 +675,10 @@ case "$ostype" in
 		;;
 	Darwin)
 		MODULE_LDFLAGS="-avoid-version -dylib"
-		LDFLAGS="$LDFLAGS -Wl,-flat_namespace"
+                # This flag might be a security issue, do not use in production code, unfortunately we still need it for criterion tests and the current mocking solution
+                if test "x$enable_tests" = "xyes"; then
+		        LDFLAGS="$LDFLAGS -Wl,-flat_namespace"
+                fi
                 # NOTE: This is now seems to be an Apple/Xcode "only" issue, but probably much better a clang one, so later we might want to add this globally
                 # XCode15 new linker has some issues (e.g. https://developer.apple.com/forums/thread/737707)
                 # switch back to classic linking till not fixed (https://developer.apple.com/documentation/xcode-release-notes/xcode-15-release-notes#Linking)
@@ -1029,8 +1041,6 @@ if test "$linking_mode" != "dynamic"; then
 	LIBS=$old_LIBS
 fi
 
-GLIB_CFLAGS="${GLIB_CFLAGS} -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_32"
-
 old_CPPFLAGS=$CPPFLAGS
 CPPFLAGS="$GLIB_CFLAGS"
 old_LDFLAGS=$LDFLAGS
@@ -1040,8 +1050,23 @@ old_LIBS=$LIBS
 LIBS="$LIBS $GLIB_LIBS"
 AC_CHECK_FUNCS(g_list_copy_deep \
   g_ptr_array_find_with_equal_func \
+  g_memdup2 \
   g_canonicalize_filename)
 LIBS=$old_LIBS
+
+if test "x$ac_cv_func_g_memdup2" = "xyes"; then
+    dnl only set MIN_REQUIRED to 2.68 if we know that we are at least on that version.
+    dnl On CentOS7/SLES12 we don't have recent enough glib but with compat
+    dnl wrappers we can compile. Bad news is that if we don't set to 2.68 at least,
+    dnl we can't compile on new platforms with clang.
+
+    dnl Best of both worlds: we set to 2.68 if we have that version, so we
+    dnl get clang to compile our code, otherwise we set it to 2.32.
+
+    GLIB_CFLAGS="${GLIB_CFLAGS} -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_68"
+else
+    GLIB_CFLAGS="${GLIB_CFLAGS} -DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_32"
+fi
 
 AC_CACHE_CHECK(sanity checking Glib headers,
                blb_cv_glib_sane,
@@ -1158,6 +1183,7 @@ AC_CHECK_DECLS([SSL_CTX_set1_sigalgs_list],[], [], [[#include <openssl/ssl.h>]])
 AC_CHECK_DECLS([SSL_CTX_set1_client_sigalgs_list],[], [], [[#include <openssl/ssl.h>]])
 AC_CHECK_DECLS([SSL_add_file_cert_subjects_to_stack],[], [], [[#include <openssl/ssl.h>]])
 AC_CHECK_DECLS([SSL_add_dir_cert_subjects_to_stack],[], [], [[#include <openssl/ssl.h>]])
+AC_CHECK_DECLS([SSL_CTX_set_min_proto_version],[], [], [[#include <openssl/ssl.h>]])
 
 CPPFLAGS="$CPPFLAGS_SAVE"
 
@@ -1330,24 +1356,19 @@ dnl ***************************************************************************
 dnl json headers/libraries
 dnl ***************************************************************************
 
-enable_json="no"
-
 if test "x$with_jsonc" = "xinternal"; then
    AC_MSG_ERROR([The internal (bundled) json-c library is no longer supported!])
 fi
 
-if test "x$with_jsonc" = "xsystem"; then
-   with_jsonc="yes"
-fi
+# became hard-dependency
+with_jsonc="yes"
 
-if test "x$with_jsonc" = "xyes" -o "x$with_jsonc" = "xauto"; then
-   enable_json="yes"
-   PKG_CHECK_EXISTS(json-c, json_module_name="json-c",
-   PKG_CHECK_EXISTS(json, json_module_name="json"))
-   PKG_CHECK_MODULES(JSON, $json_module_name >= $JSON_C_MIN_VERSION,[with_jsonc="yes"], [JSON_LIBS=""; enable_json="no"])
-   if test "x$with_jsonc" = "xyes" -a "x$enable_json" = "xno"; then
-     AC_MSG_ERROR([json-c library development files cannot be not found on system!])
-   fi
+enable_json="yes"
+PKG_CHECK_EXISTS(json-c, json_module_name="json-c",
+PKG_CHECK_EXISTS(json, json_module_name="json"))
+PKG_CHECK_MODULES(JSON, $json_module_name >= $JSON_C_MIN_VERSION,[with_jsonc="yes"], [JSON_LIBS=""; enable_json="no"])
+if test "x$enable_json" = "xno"; then
+  AC_MSG_ERROR([json-c library development files cannot be not found on system!])
 fi
 
 dnl ***************************************************************************
@@ -1588,7 +1609,7 @@ if test "x$enable_http" != "xno" && test "x$with_libcurl" != "xno"; then
         if test "$enable_http" = "yes"; then
            old_CFLAGS=$CFLAGS
            CFLAGS=$LIBCURL_CFLAGS
-           AC_CHECK_DECLS([CURL_SSLVERSION_TLSv1_0, CURL_SSLVERSION_TLSv1_1, CURL_SSLVERSION_TLSv1_2, CURL_SSLVERSION_TLSv1_3, CURLOPT_TLS13_CIPHERS, CURLOPT_SSL_VERIFYSTATUS, CURLOPT_REDIR_PROTOCOLS_STR],
+           AC_CHECK_DECLS([CURL_SSLVERSION_TLSv1_0, CURL_SSLVERSION_TLSv1_1, CURL_SSLVERSION_TLSv1_2, CURL_SSLVERSION_TLSv1_3, CURLOPT_TLS13_CIPHERS, CURLOPT_SSL_VERIFYSTATUS, CURLOPT_REDIR_PROTOCOLS_STR, curl_url, CURLU_ALLOW_SPACE, CURLUE_BAD_SCHEME, CURLUE_BAD_HOSTNAME, CURLUE_BAD_PORT_NUMBER, CURLUE_BAD_USER, CURLUE_BAD_PASSWORD, CURLUE_MALFORMED_INPUT, CURLUE_LAST, CURLUPART_SCHEME, CURLUPART_HOST, CURLUPART_PORT, CURLUPART_USER, CURLUPART_PASSWORD, CURLUPART_URL],
                           [], [],
                           [[#include <curl/curl.h>]])
            CFLAGS=$old_CFLAGS
@@ -1811,6 +1832,31 @@ else
 fi
 
 dnl ***************************************************************************
+dnl darwin osl headers/libraries
+dnl ***************************************************************************
+
+if test "x$enable_darwin_osl" = "xauto" || test "x$enable_darwin_osl" = "xyes"; then
+        if test $ostype = "Darwin"; then
+                if test "x$enable_darwin_osl" = "xyes"; then
+                        WAS_DARWIN_OSL_FORCED="yes"
+                fi
+
+                AC_LANG_PUSH([Objective C])
+
+                # TODO: Once gcc was able to compile our ObjC code correctly we should add here a more sopgisticated check
+                AC_CHECK_HEADERS([OSLog/OSLog.h], [enable_darwin_osl=yes], [enable_darwin_osl=no])
+
+                AC_LANG_POP([Objective C])
+
+                if test "$WAS_DARWIN_OSL_FORCED" = "yes" && test "$enable_darwin_osl" = "no"; then
+                        AC_MSG_ERROR([Could not build Darwin OSLog without OSLog headers])
+                fi
+        else
+                enable_darwin_osl=no
+        fi
+fi
+
+dnl ***************************************************************************
 dnl misc features to be enabled
 dnl ***************************************************************************
 
@@ -2029,7 +2075,7 @@ fi
 python_moduledir="$moduledir"/python
 python_sysconf_moduledir="${sysconfdir}/python"
 
-CPPFLAGS="$CPPFLAGS $GLIB_CFLAGS $EVTLOG_CFLAGS $PCRE2_CFLAGS $OPENSSL_CFLAGS $LIBNET_CFLAGS $LIBDBI_CFLAGS $IVYKIS_CFLAGS $LIBCAP_CFLAGS -D_GNU_SOURCE -D_DEFAULT_SOURCE -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64"
+CPPFLAGS="$CPPFLAGS $GLIB_CFLAGS $EVTLOG_CFLAGS $PCRE2_CFLAGS $OPENSSL_CFLAGS $LIBNET_CFLAGS $LIBDBI_CFLAGS $IVYKIS_CFLAGS $JSON_CFLAGS $LIBCAP_CFLAGS -D_GNU_SOURCE -D_DEFAULT_SOURCE -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64"
 
 ########################################################
 ## NOTES: on how syslog-ng is linked
@@ -2083,14 +2129,14 @@ if test "x$linking_mode" = "xdynamic"; then
 		# when using the internal ivykis, we're linking it statically into libsyslog-ng.so
 
 		TOOL_DEPS_LIBS="$SYSLOGNG_DEPS_LIBS"
-		CORE_DEPS_LIBS="$SYSLOGNG_DEPS_LIBS $IVYKIS_LIBS"
+		CORE_DEPS_LIBS="$SYSLOGNG_DEPS_LIBS $IVYKIS_LIBS $JSON_LIBS"
 	else
 		# otherwise everything needs to link against libivykis.so
 
 		SYSLOGNG_DEPS_LIBS="$SYSLOGNG_DEPS_LIBS $IVYKIS_LIBS"
 
 		TOOL_DEPS_LIBS="$SYSLOGNG_DEPS_LIBS"
-		CORE_DEPS_LIBS="$SYSLOGNG_DEPS_LIBS"
+		CORE_DEPS_LIBS="$SYSLOGNG_DEPS_LIBS $JSON_LIBS"
 	fi
 
 	# syslog-ng binary is linked with the default link command (e.g. libtool)
@@ -2189,6 +2235,7 @@ AM_CONDITIONAL(ENABLE_SYSTEMD, [test "$enable_systemd" = "yes"])
 AM_CONDITIONAL(ENABLE_SYSTEMD_UNIT_INSTALL, [test "$systemdsystemunitdir" != ""])
 AM_CONDITIONAL(ENABLE_SQL, [test "$enable_sql" = "yes"])
 AM_CONDITIONAL(ENABLE_SUN_STREAMS, [test "$enable_sun_streams" = "yes"])
+AM_CONDITIONAL(ENABLE_DARWIN_OSL, [test "$enable_darwin_osl" = "yes"])
 AM_CONDITIONAL(ENABLE_OPENBSD_SYSTEM_SOURCE, [test "$enable_openbsd_system_source" = "yes"])
 AM_CONDITIONAL(ENABLE_EBPF, [test "$enable_ebpf" = "yes"])
 AM_CONDITIONAL(ENABLE_PACCT, [test "$enable_pacct" = "yes"])
@@ -2314,6 +2361,7 @@ echo "  Package name                : $PACKAGE_NAME"
 echo " Compiler options:"
 echo "  compiler                    : $CC"
 echo "  compiler options            : $CFLAGS $CPPFLAGS"
+echo "  ObjC compiler               : $OBJC"
 echo "  C++ enabled                 : ${enable_cpp:=no}"
 if test "x$enable_cpp" = "xyes"; then
 echo "  C++ compiler                : $CXX"
@@ -2351,6 +2399,7 @@ echo "  Install manual pages        : ${enable_manpages_install:=no}"
 echo " Modules:"
 echo "  Module search path          : ${module_path}"
 echo "  Sun STREAMS support (module): ${enable_sun_streams:=no}"
+echo "  Darwin OSL support (module) : ${enable_darwin_osl:=no}"
 echo "  OpenBSD syslog (module)     : ${enable_openbsd_system_source:=no}"
 echo "  SQL support (module)        : ${enable_sql:=no}"
 echo "  PACCT module (EXPERIMENTAL) : ${enable_pacct:=no}"

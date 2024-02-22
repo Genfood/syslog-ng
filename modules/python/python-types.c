@@ -25,7 +25,7 @@
 #include "scanner/list-scanner/list-scanner.h"
 #include "str-repr/encode.h"
 #include "timeutils/conv.h"
-#include "timeutils/misc.h"
+#include "timeutils/cache.h"
 #include "messages.h"
 
 /* Python datetime API */
@@ -118,6 +118,8 @@ py_list_from_list(const gchar *list, gssize list_len)
           Py_XDECREF(element);
           return NULL;
         }
+
+      Py_DECREF(element);
     }
 
   list_scanner_deinit(&scanner);
@@ -125,8 +127,8 @@ py_list_from_list(const gchar *list, gssize list_len)
   return obj;
 }
 
-PyObject
-*py_string_list_from_string_list(const GList *string_list)
+PyObject *
+py_string_list_from_string_list(const GList *string_list)
 {
   PyObject *obj = PyList_New(0);
   if (!obj)
@@ -182,7 +184,7 @@ py_obj_from_log_msg_value(const gchar *value, gssize value_len, LogMessageValueT
     case LM_VT_INTEGER:
     {
       gint64 l;
-      if (type_cast_to_int64(value, &l, NULL))
+      if (type_cast_to_int64(value, value_len, &l, NULL))
         return py_long_from_long(l);
       goto type_cast_error;
     }
@@ -190,7 +192,7 @@ py_obj_from_log_msg_value(const gchar *value, gssize value_len, LogMessageValueT
     case LM_VT_DOUBLE:
     {
       gdouble d;
-      if (type_cast_to_double(value, &d, NULL))
+      if (type_cast_to_double(value, value_len, &d, NULL))
         return py_double_from_double(d);
       goto type_cast_error;
     }
@@ -198,7 +200,7 @@ py_obj_from_log_msg_value(const gchar *value, gssize value_len, LogMessageValueT
     case LM_VT_BOOLEAN:
     {
       gboolean b;
-      if (type_cast_to_boolean(value, &b, NULL))
+      if (type_cast_to_boolean(value, value_len, &b, NULL))
         return py_boolean_from_boolean(b);
       goto type_cast_error;
     }
@@ -213,7 +215,7 @@ py_obj_from_log_msg_value(const gchar *value, gssize value_len, LogMessageValueT
     {
       gint64 msec = 0;
 
-      if (type_cast_to_datetime_msec(value, &msec, NULL))
+      if (type_cast_to_datetime_msec(value, value_len, &msec, NULL))
         return py_datetime_from_msec(msec);
       goto type_cast_error;
     }

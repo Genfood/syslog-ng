@@ -28,6 +28,7 @@
 #include "plugin-types.h"
 #include "find-crlf.h"
 #include "scratch-buffers.h"
+#include "utf8utils.h"
 
 static gsize
 _rstripped_message_length(const guchar *data, gsize length)
@@ -68,7 +69,7 @@ msg_format_preprocess_message(MsgFormatOptions *options, LogMessage *msg,
 {
   if (options->flags & LP_STORE_RAW_MESSAGE)
     {
-      log_msg_set_value(msg, LOG_MSG_GET_VALUE_HANDLE_STATIC("RAWMSG"),
+      log_msg_set_value(msg, LM_V_RAWMSG,
                         (gchar *) data, _rstripped_message_length(data, length));
     }
 }
@@ -114,8 +115,27 @@ msg_format_process_message(MsgFormatOptions *options, LogMessage *msg,
     }
   else
     {
-      log_msg_set_value(msg, LM_V_MESSAGE, (gchar *) data, _rstripped_message_length(data, length));
       msg->pri = options->default_pri;
+
+      if (options->flags & LP_SANITIZE_UTF8)
+        {
+          if (!g_utf8_validate((gchar *) data, length, NULL))
+            {
+              gchar buf[SANITIZE_UTF8_BUFFER_SIZE(length)];
+              gsize sanitized_length;
+              optimized_sanitize_utf8_to_escaped_binary(data, length, &sanitized_length, buf, sizeof(buf));
+              log_msg_set_value(msg, LM_V_MESSAGE, buf, _rstripped_message_length((guchar *) buf, sanitized_length));
+              log_msg_set_tag_by_id(msg, LM_T_MSG_UTF8_SANITIZED);
+              msg->flags |= LF_UTF8;
+              return TRUE;
+            }
+          else
+            msg->flags |= LF_UTF8;
+        }
+      else if ((options->flags & LP_VALIDATE_UTF8) && g_utf8_validate((gchar *) data, length, NULL))
+        msg->flags |= LF_UTF8;
+
+      log_msg_set_value(msg, LM_V_MESSAGE, (gchar *) data, _rstripped_message_length(data, length));
       return TRUE;
     }
 }
@@ -151,6 +171,7 @@ msg_format_parse_into(MsgFormatOptions *options, LogMessage *msg,
 
   if (!msg_format_try_parse_into(options, msg, data, length, &problem_position))
     {
+      log_msg_set_tag_by_id(msg, LM_T_MSG_PARSE_ERROR);
       msg_format_inject_parse_error(msg, data, _rstripped_message_length(data, length), problem_position);
 
       /* the injected error message needs to be postprocessed too */

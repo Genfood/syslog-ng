@@ -1,5 +1,5 @@
 Name: syslog-ng
-Version: 4.4.0
+Version: 4.6.0
 Release: 2%{?dist}
 Summary: Next-generation syslog server
 
@@ -58,6 +58,7 @@ BuildRequires: pkgconfig
 BuildRequires: libtool
 BuildRequires: bison
 BuildRequires: flex
+BuildRequires: gperf
 BuildRequires: libxslt
 BuildRequires: glib2-devel
 BuildRequires: ivykis-devel
@@ -613,6 +614,12 @@ fi
 
 
 %changelog
+* Tue Jan  9 2024 github-actions <41898282+github-actions@users.noreply.github.com> - 4.6.0-1
+- updated to 4.6.0
+
+* Wed Nov 22 2023 github-actions <41898282+github-actions@users.noreply.github.com> - 4.5.0-1
+- updated to 4.5.0
+
 * Tue Sep 19 2023 github-actions <41898282+github-actions@users.noreply.github.com> - 4.4.0-1
 - updated to 4.4.0
 

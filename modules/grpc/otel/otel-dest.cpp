@@ -30,7 +30,7 @@ using namespace syslogng::grpc::otel;
 /* C++ Implementations */
 
 DestDriver::DestDriver(OtelDestDriver *s)
-  : super(s)
+  : super(s), compression(false), batch_bytes(4 * 1000 * 1000)
 {
   credentials_builder_wrapper.self = &credentials_builder;
 }
@@ -45,6 +45,42 @@ const std::string &
 DestDriver::get_url() const
 {
   return url;
+}
+
+void
+DestDriver::set_compression(bool compression_)
+{
+  compression = compression_;
+}
+
+bool
+DestDriver::get_compression() const
+{
+  return compression;
+}
+
+void
+DestDriver::set_batch_bytes(size_t batch_bytes_)
+{
+  batch_bytes = batch_bytes_;
+}
+
+size_t
+DestDriver::get_batch_bytes() const
+{
+  return batch_bytes;
+}
+
+void
+DestDriver::add_extra_channel_arg(std::string name, long value)
+{
+  int_extra_channel_args.push_back(std::pair<std::string, long> {name, value});
+}
+
+void
+DestDriver::add_extra_channel_arg(std::string name, std::string value)
+{
+  string_extra_channel_args.push_back(std::pair<std::string, std::string> {name, value});
 }
 
 const char *
@@ -92,12 +128,22 @@ DestDriver::init()
       return false;
     }
 
-  return log_threaded_dest_driver_init_method(&super->super.super.super.super);
+  if (!log_threaded_dest_driver_init_method(&this->super->super.super.super.super))
+    return false;
+
+  log_threaded_dest_driver_register_aggregated_stats(&this->super->super);
+
+  StatsClusterKeyBuilder *kb = stats_cluster_key_builder_new();
+  format_stats_key(kb);
+  metrics.init(kb, log_pipe_is_internal(&super->super.super.super.super) ? STATS_LEVEL3 : STATS_LEVEL1);
+
+  return true;
 }
 
 bool
 DestDriver::deinit()
 {
+  metrics.deinit();
   return log_threaded_dest_driver_deinit_method(&super->super.super.super.super);
 }
 
@@ -113,6 +159,30 @@ void
 otel_dd_set_url(LogDriver *s, const gchar *url)
 {
   get_DestDriver(s)->set_url(url);
+}
+
+void
+otel_dd_set_compression(LogDriver *s, gboolean enable)
+{
+  get_DestDriver(s)->set_compression(enable);
+}
+
+void
+otel_dd_set_batch_bytes(LogDriver *s, glong b)
+{
+  get_DestDriver(s)->set_batch_bytes((size_t) b);
+}
+
+void
+otel_dd_add_int_channel_arg(LogDriver *s, const gchar *name, glong value)
+{
+  get_DestDriver(s)->add_extra_channel_arg(name, value);
+}
+
+void
+otel_dd_add_string_channel_arg(LogDriver *s, const gchar *name, const gchar *value)
+{
+  get_DestDriver(s)->add_extra_channel_arg(name, value);
 }
 
 GrpcClientCredentialsBuilderW *
@@ -171,6 +241,7 @@ otel_dd_init_super(LogThreadedDestDriver *s, GlobalConfig *cfg)
   s->worker.construct = _construct_worker;
   s->stats_source = stats_register_type("opentelemetry");
   s->format_stats_key = _format_stats_key;
+  s->metrics.raw_bytes_enabled = TRUE;
 }
 
 LogDriver *

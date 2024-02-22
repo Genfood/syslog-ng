@@ -27,6 +27,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include "str-utils.h"
 
 extern int main_debug;
 
@@ -51,6 +52,7 @@ static CfgLexerKeyword main_keywords[] =
   /* statements */
   { "source",             KW_SOURCE },
   { "filter",             KW_FILTER },
+  { "filterx",            KW_FILTERX },
   { "parser",             KW_PARSER },
   { "rewrite",            KW_REWRITE },
   { "destination",        KW_DESTINATION },
@@ -462,23 +464,13 @@ cfg_parser_cleanup(CfgParser *self, gpointer instance)
 gboolean
 cfg_process_flag(CfgFlagHandler *handlers, gpointer base, const gchar *flag_)
 {
-  gint h;
-  gchar flag[32];
+  gboolean result = FALSE;
+  gchar *flag = normalize_flag(flag_);
 
-  for (h = 0; flag_[h] && h < sizeof(flag); h++)
+  for (gsize i = 0; handlers[i].name; i++)
     {
-      if (flag_[h] == '_')
-        flag[h] = '-';
-      else
-        flag[h] = flag_[h];
-    }
-  flag[h] = 0;
-
-  for (h = 0; handlers[h].name; h++)
-    {
-      CfgFlagHandler *handler = &handlers[h];
-
-      if (strcmp(handlers[h].name, flag) == 0)
+      CfgFlagHandler *handler = &handlers[i];
+      if (strcmp(handlers[i].name, flag) == 0)
         {
           guint32 *field = ((guint32 *) (((gchar *) base) + handler->ofs));
           switch (handler->op)
@@ -490,7 +482,8 @@ cfg_process_flag(CfgFlagHandler *handlers, gpointer base, const gchar *flag_)
                 *field = ((*field) & ~handler->mask) | handler->param;
               else
                 *field = (*field) | handler->param;
-              return TRUE;
+              result = TRUE;
+              goto finish;
             case CFH_CLEAR:
               /* set the bitfield to zero */
 
@@ -498,14 +491,18 @@ cfg_process_flag(CfgFlagHandler *handlers, gpointer base, const gchar *flag_)
                 *field = (*field) & ~handler->mask;
               else
                 *field = (*field) & ~handler->param;
-              return TRUE;
+              result = TRUE;
+              goto finish;
             default:
               g_assert_not_reached();
               break;
             }
         }
     }
-  return FALSE;
+
+finish:
+  g_free(flag);
+  return result;
 }
 
 gboolean

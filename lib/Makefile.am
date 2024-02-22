@@ -8,6 +8,7 @@ include lib/logproto/Makefile.am
 include lib/rewrite/Makefile.am
 include lib/parser/Makefile.am
 include lib/filter/Makefile.am
+include lib/filterx/Makefile.am
 include lib/template/Makefile.am
 include lib/value-pairs/Makefile.am
 include lib/stats/Makefile.am
@@ -53,7 +54,7 @@ lib_libsyslog_ng_la_LIBADD		= @CORE_DEPS_LIBS@ $(libsystemd_LIBS) $(top_builddir
 lib_libsyslog_ng_la_LDFLAGS		= -no-undefined -release ${LSNG_RELEASE} \
 					  -version-info ${LSNG_CURRENT}:${LSNG_REVISION}:${LSNG_AGE}
 
-lib_test_subdirs			= lib_filter lib_logproto lib_parser lib_rewrite lib_template lib_stats lib_control
+lib_test_subdirs			= lib_filter lib_filterx lib_logproto lib_parser lib_rewrite lib_template lib_stats lib_control
 
 lib_libsyslog_ng_la_DEPENDENCIES       = lib/eventlog/src/libevtlog.la lib/secret-storage/libsecret-storage.la
 
@@ -148,6 +149,7 @@ pkginclude_HEADERS			+= \
 	lib/ml-batched-timer.h		\
 	lib/msg-format.h		\
 	lib/msg-stats.h			\
+	lib/on-error.h			\
 	lib/parse-number.h		\
 	lib/pathutils.h         \
 	lib/persist-state.h		\
@@ -243,6 +245,7 @@ lib_libsyslog_ng_la_SOURCES		= \
 	lib/ml-batched-timer.c		\
 	lib/msg-format.c		\
 	lib/msg-stats.c			\
+	lib/on-error.c			\
 	lib/parse-number.c		\
 	lib/pathutils.c         \
 	lib/persist-state.c		\
@@ -283,6 +286,7 @@ lib_libsyslog_ng_la_SOURCES		= \
 	$(transport_sources)		\
 	$(logproto_sources)		\
 	$(filter_sources)		\
+	$(filterx_sources)		\
 	$(parser_sources)		\
 	$(rewrite_sources)		\
 	$(template_sources)		\
@@ -309,15 +313,21 @@ lib_libsyslog_ng_la_LIBADD		+= @OPENSSL_LIBS@
 BUILT_SOURCES += lib/cfg-lex.c lib/cfg-lex.h						\
 	lib/cfg-grammar.c lib/cfg-grammar.h						\
 	lib/block-ref-grammar.y lib/block-ref-grammar.c lib/block-ref-grammar.h		\
-	lib/pragma-grammar.y lib/pragma-grammar.h lib/pragma-grammar.c
+	lib/pragma-grammar.y lib/pragma-grammar.h lib/pragma-grammar.c			\
+	lib/severity-aliases.h
 
 EXTRA_DIST += \
 	lib/block-ref-grammar.ym	\
 	lib/pragma-grammar.ym		\
 	lib/merge-grammar.py		\
+	lib/severity-aliases.table	\
+	lib/severity-aliases.h		\
 	lib/hostname-unix.c
 
 lib/plugin-types.h: lib/cfg-grammar.h
+
+%.h: %.table
+	$(GPERF) $< --output $@
 
 lib/ libsyslog-ng: lib/libsyslog-ng.la
 if IVYKIS_INTERNAL

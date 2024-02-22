@@ -20,7 +20,7 @@
 #
 #############################################################################
 
-from .s3_object import S3Object, S3ObjectPersist, SharedBool, ConstructorError, PersistLoadError, AlreadyFinishedError
+from .s3_object import S3Object, S3ObjectPersist, ConstructorError, PersistLoadError, AlreadyFinishedError
 
 try:
     from boto3 import client
@@ -238,7 +238,7 @@ class S3Destination(LogDestination):
 
         self.client = client(
             service_name="s3",
-            endpoint_url=self.url,
+            endpoint_url=self.url if self.url != "" else None,
             aws_access_key_id=self.access_key,
             aws_secret_access_key=self.secret_key,
             region_name=self.region,

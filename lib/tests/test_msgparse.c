@@ -167,7 +167,7 @@ test_log_messages_can_be_parsed(struct msgparse_params *param)
     }
   else
     {
-      now = cached_g_current_time_sec();
+      now = get_cached_realtime_sec();
       cr_assert(_absolute_value(parsed_timestamp->ut_sec - now) <= 5,
                 "Expected parsed message timestamp to be set to now; now='%d', timestamp->tv_sec='%d'",
                 (gint)now, (gint)parsed_timestamp->ut_sec);
@@ -1223,6 +1223,37 @@ Test(msgparse, test_no_rfc3164_fallback_flag)
       .expected_program = "syslog-ng",
       .expected_host = "",
       .expected_msg = "Error processing log message: <189>some message",
+    },
+    {NULL}
+  };
+  run_parameterized_test(params);
+}
+
+Test(msgparse, test_sanitize_utf8)
+{
+  struct msgparse_params params[] =
+  {
+    {
+      .msg = "<189>program hello\xf0\x28\x8c\xbcrena",
+      .parse_flags = LP_SANITIZE_UTF8,
+      .expected_pri = 189,
+      .expected_program = "program",
+      .expected_host = "",
+      .expected_msg = "hello\\xf0(\\x8c\\xbcrena",
+    },
+    {
+      .msg = "<7>1 - bzorp openvpn 2499 - - PTHREAD \xf0\x28\x8c\x28 initialized",
+      .parse_flags = LP_SYSLOG_PROTOCOL | LP_SANITIZE_UTF8,
+      .expected_pri = 7,
+      .expected_program = "openvpn",
+      .expected_host = "bzorp",
+      .expected_msg = "PTHREAD \\xf0(\\x8c( initialized",
+    },
+    {
+      .msg = "rena\xa0\xa1",
+      .parse_flags = LP_NOPARSE | LP_SANITIZE_UTF8,
+      .expected_pri = 65535,
+      .expected_msg = "rena\\xa0\\xa1",
     },
     {NULL}
   };
